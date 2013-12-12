@@ -4,7 +4,7 @@ Adds the excellent Reactive Extensions library to rails.
 
 See the [RxJS website](http://reactive-extensions.github.io/RxJS/) for more info.
 
-# Installation
+## Installation
 
 Add `gem 'rxjs-rails'` to your Gemfile
 
@@ -42,4 +42,14 @@ Available js files:
     rx.time.min.js
     rx.virtualtime.js
     rx.virtualtime.min.js
+
+## versions
+
+```
++------------+---------+
+| rxjs-rails |  rxjs   |
++------------+---------+
+| 0.0.1      | 2.2.9   |
++------------+---------+
+```
 
