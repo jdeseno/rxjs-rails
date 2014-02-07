@@ -22,7 +22,7 @@
 
     // Because of build optimizers
     if (typeof define === 'function' && define.amd) {
-        define(['rx', 'exports'], function (Rx, exports) {
+        define(['rx.virtualtime', 'exports'], function (Rx, exports) {
             root.Rx = factory(root, exports, Rx);
             return root.Rx;
         });
@@ -314,8 +314,10 @@
                 notification = message.value;
                 (function (innerNotification) {
                     scheduler.scheduleAbsoluteWithState(null, message.time, function () {
-                        for (var j = 0; j < observable.observers.length; j++) {
-                            innerNotification.accept(observable.observers[j]);
+                        var obs = observable.observers.slice(0);
+
+                        for (var j = 0, jLen = obs.length; j < jLen; j++) {
+                            innerNotification.accept(obs[j]);
                         }
                         return disposableEmpty;
                     });

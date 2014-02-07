@@ -42,16 +42,6 @@
         }
     }
 
-    /** Used to determine if values are of the language type Object */
-    var objectTypes = {
-        'boolean': false,
-        'function': true,
-        'object': true,
-        'number': false,
-        'string': false,
-        'undefined': false
-    };
-
     /** `Object#toString` result shortcuts */
     var argsClass = '[object Arguments]',
         arrayClass = '[object Array]',
@@ -956,44 +946,38 @@
     var currentThreadScheduler = Scheduler.currentThread = (function () {
         var queue;
 
-        function Trampoline() {
-            queue = new PriorityQueue(4);
-        }
-
-        Trampoline.prototype.dispose = function () {
-            queue = null;
-        };
-
-        Trampoline.prototype.run = function () {
+        function runTrampoline (q) {
             var item;
-            while (queue.length > 0) {
-                item = queue.dequeue();
+            while (q.length > 0) {
+                item = q.dequeue();
                 if (!item.isCancelled()) {
-                    while (item.dueTime - Scheduler.now() > 0) { }
+                    // Note, do not schedule blocking work!
+                    while (item.dueTime - Scheduler.now() > 0) {
+                    }
                     if (!item.isCancelled()) {
                         item.invoke();
                     }
                 }
-            }
-        };
+            }            
+        }
 
         function scheduleNow(state, action) {
             return this.scheduleWithRelativeAndState(state, 0, action);
         }
 
         function scheduleRelative(state, dueTime, action) {
-            var dt = this.now() + normalizeTime(dueTime),
+            var dt = this.now() + Scheduler.normalize(dueTime),
                     si = new ScheduledItem(this, state, action, dt),
                     t;
             if (!queue) {
-                t = new Trampoline();
+                queue = new PriorityQueue(4);
+                queue.enqueue(si);
                 try {
-                    queue.enqueue(si);
-                    t.run();
+                    runTrampoline(queue);
                 } catch (e) { 
                     throw e;
                 } finally {
-                    t.dispose();
+                    queue = null;
                 }
             } else {
                 queue.enqueue(si);
@@ -1048,19 +1032,22 @@
     }());
 
     
-    var reNative = RegExp('^' +
-      String(toString)
-        .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-        .replace(/toString| for [^\]]+/g, '.*?') + '$'
-    );
-
-    var setImmediate = typeof (setImmediate = freeGlobal && moduleExports && freeGlobal.setImmediate) == 'function' &&
-        !reNative.test(setImmediate) && setImmediate,
-        clearImmediate = typeof (clearImmediate = freeGlobal && moduleExports && freeGlobal.clearImmediate) == 'function' &&
-        !reNative.test(clearImmediate) && clearImmediate;
-
     var scheduleMethod, clearMethod = noop;
     (function () {
+
+        var reNative = RegExp('^' +
+          String(toString)
+            .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+            .replace(/toString| for [^\]]+/g, '.*?') + '$'
+        );
+
+        var setImmediate = typeof (setImmediate = freeGlobal && moduleExports && freeGlobal.setImmediate) == 'function' &&
+            !reNative.test(setImmediate) && setImmediate,
+            clearImmediate = typeof (clearImmediate = freeGlobal && moduleExports && freeGlobal.clearImmediate) == 'function' &&
+            !reNative.test(clearImmediate) && clearImmediate;
+
+        var BrowserMutationObserver = root.MutationObserver || root.WebKitMutationObserver;
+
         function postMessageSupported () {
             // Ensure not in a worker
             if (!root.postMessage || root.importScripts) { return false; }
@@ -1074,12 +1061,44 @@
             return isAsync;
         }
 
-        // Check for setImmediate first for Node v0.11+
-        if (typeof setImmediate === 'function') {
-            scheduleMethod = setImmediate;
-            clearMethod = clearImmediate;
+        // Use in order, MutationObserver, nextTick, setImmediate, postMessage, MessageChannel, script readystatechanged, setTimeout
+        if (!!BrowserMutationObserver) {
+
+            var mutationQueue = {}, mutationId = 0;
+
+            function drainQueue (mutations) {
+                for (var i = 0, len = mutations.length; i < len; i++) {
+                    var id = mutations[i].target.getAttribute('drainQueue');
+                    mutationQueue[id]();
+                    delete mutationQueue[id];
+                }
+            }
+
+            var observer = new BrowserMutationObserver(drainQueue),
+                elem = document.createElement('div');
+            observer.observe(elem, { attributes: true });
+
+            root.addEventListener('unload', function () {
+                observer.disconnect();
+                observer = null;
+            });
+
+            scheduleMethod = function (action) {
+                var id = mutationId++;
+                mutationQueue[id] = action;
+                elem.setAttribute('drainQueue', id);
+                return id;                
+            };
+
+            clearMethod = function (id) {
+                delete mutationQueue[id];
+            }
+
         } else if (typeof process !== 'undefined' && {}.toString.call(process) === '[object process]') {
             scheduleMethod = process.nextTick;
+        } else if (typeof setImmediate === 'function') {
+            scheduleMethod = setImmediate;
+            clearMethod = clearImmediate;
         } else if (postMessageSupported()) {
             var MSG_PREFIX = 'ms.rx.schedule' + Math.random(),
                 tasks = {},
@@ -2492,7 +2511,7 @@
      * @returns {Observable} An observable sequence containing lists of elements at corresponding indexes.
      */
     Observable.zipArray = function () {
-        var sources = slice.call(arguments);
+        var sources = argsOrArray(arguments, 0);
         return new AnonymousObservable(function (observer) {
             var n = sources.length,
               queues = arrayInitialize(n, function () { return []; }),
@@ -3107,37 +3126,36 @@
      * @returns {Function} A function, when executed with the required parameters minus the callback, produces an Observable sequence with a single value of the arguments to the callback as an array.
      */
     Observable.fromCallback = function (func, scheduler, context, selector) {
-        scheduler || (scheduler = timeoutScheduler);
+        scheduler || (scheduler = immediateScheduler);
         return function () {
-            var args = slice.call(arguments, 0), 
-                subject = new AsyncSubject();
+            var args = slice.call(arguments, 0);
 
-            scheduler.schedule(function () {
-                function handler(e) {
-                    var results = e;
-                    
-                    if (selector) {
-                        try {
-                            results = selector(arguments);
-                        } catch (err) {
-                            subject.onError(err);
-                            return;
+            return new AnonymousObservable(function (observer) {
+                return scheduler.schedule(function () {
+                    function handler(e) {
+                        var results = e;
+                        
+                        if (selector) {
+                            try {
+                                results = selector(arguments);
+                            } catch (err) {
+                                observer.onError(err);
+                                return;
+                            }
+                        } else {
+                            if (results.length === 1) {
+                                results = results[0];
+                            }
                         }
-                    } else {
-                        if (results.length === 1) {
-                            results = results[0];
-                        }
+
+                        observer.onNext(results);
+                        observer.onCompleted();
                     }
 
-                    subject.onNext(results);
-                    subject.onCompleted();
-                }
-
-                args.push(handler);
-                func.apply(context, args);
+                    args.push(handler);
+                    func.apply(context, args);
+                });
             });
-
-            return subject.asObservable();
         };
     };
 
@@ -3150,42 +3168,42 @@
      * @returns {Function} An async function which when applied, returns an observable sequence with the callback arguments as an array.
      */
     Observable.fromNodeCallback = function (func, scheduler, context, selector) {
-        scheduler || (scheduler = timeoutScheduler);
+        scheduler || (scheduler = immediateScheduler);
         return function () {
-            var args = slice.call(arguments, 0), 
-                subject = new AsyncSubject();
+            var args = slice.call(arguments, 0);
 
-            scheduler.schedule(function () {
-                function handler(err) {
-                    if (err) {
-                        subject.onError(err);
-                        return;
-                    }
-
-                    var results = slice.call(arguments, 1);
+            return new AnonymousObservable(function (observer) {
+                return scheduler.schedule(function () {
                     
-                    if (selector) {
-                        try {
-                            results = selector(results);
-                        } catch (e) {
-                            subject.onError(e);
+                    function handler(err) {
+                        if (err) {
+                            observer.onError(err);
                             return;
                         }
-                    } else {
-                        if (results.length === 1) {
-                            results = results[0];
+
+                        var results = slice.call(arguments, 1);
+                        
+                        if (selector) {
+                            try {
+                                results = selector(results);
+                            } catch (e) {
+                                observer.onError(e);
+                                return;
+                            }
+                        } else {
+                            if (results.length === 1) {
+                                results = results[0];
+                            }
                         }
+
+                        observer.onNext(results);
+                        observer.onCompleted();
                     }
 
-                    subject.onNext(results);
-                    subject.onCompleted();
-                }
-
-                args.push(handler);
-                func.apply(context, args);
+                    args.push(handler);
+                    func.apply(context, args);
+                });
             });
-
-            return subject.asObservable();
         };
     };
 
@@ -3288,18 +3306,40 @@
      * @returns {Observable} An Observable sequence which wraps the existing promise success and failure.
      */
     Observable.fromPromise = function (promise) {
-        var subject = new AsyncSubject();
-        
-        promise.then(
-            function (value) {
-                subject.onNext(value);
-                subject.onCompleted();
-            }, 
-            function (reason) {
-               subject.onError(reason);
+        return new AnonymousObservable(function (observer) {
+            promise.then(
+                function (value) {
+                    observer.onNext(value);
+                    observer.onCompleted();
+                }, 
+                function (reason) {
+                   observer.onError(reason);
+                });
+        });
+    };
+    /*
+     * Converts an existing observable sequence to an ES6 Compatible Promise
+     * @example
+     * var promise = Rx.Observable.return(42).toPromise(RSVP.Promise);
+     * @param {Function} The constructor of the promise
+     * @returns {Promise} An ES6 compatible promise with the last value from the observable sequence.
+     */
+    observableProto.toPromise = function (promiseCtor) {
+        var source = this;
+        return new promiseCtor(function (resolve, reject) {
+            // No cancellation can be done
+            var value, hasValue = false;
+            source.subscribe(function (v) {
+                value = v;
+                hasValue = true;
+            }, function (err) {
+                reject(err);
+            }, function () {
+                if (hasValue) {
+                    resolve(value);
+                }
             });
-            
-        return subject.asObservable();
+        });
     };
     /**
      * Multicasts the source sequence notifications through an instantiated subject into all uses of the sequence within a selector function. Each
@@ -3458,7 +3498,7 @@
     };
 
     /** @private */
-    var ConnectableObservable = (function (_super) {
+    var ConnectableObservable = Rx.ConnectableObservable = (function (_super) {
         inherits(ConnectableObservable, _super);
 
         /**
@@ -4560,13 +4600,16 @@
 
         function subscribe(observer) {
             checkDisposed.call(this);
+            
             if (!this.isStopped) {
                 this.observers.push(observer);
                 return new InnerSubscription(this, observer);
             }
-            var ex = this.exception;
-            var hv = this.hasValue;
-            var v = this.value;
+
+            var ex = this.exception,
+                hv = this.hasValue,
+                v = this.value;
+
             if (ex) {
                 observer.onError(ex);
             } else if (hv) {
@@ -4575,6 +4618,7 @@
             } else {
                 observer.onCompleted();
             }
+
             return disposableEmpty;
         }
 
@@ -4587,11 +4631,11 @@
         function AsyncSubject() {
             _super.call(this, subscribe);
 
-            this.isDisposed = false,
-            this.isStopped = false,
-            this.value = null,
-            this.hasValue = false,
-            this.observers = [],
+            this.isDisposed = false;
+            this.isStopped = false;
+            this.value = null;
+            this.hasValue = false;
+            this.observers = [];
             this.exception = null;
         }
 
@@ -4601,6 +4645,7 @@
              * @returns {Boolean} Indicates whether the subject has observers subscribed to it.
              */         
             hasObservers: function () {
+                checkDisposed.call(this);
                 return this.observers.length > 0;
             },
             /**
@@ -4610,10 +4655,10 @@
                 var o, i, len;
                 checkDisposed.call(this);
                 if (!this.isStopped) {
-                    var os = this.observers.slice(0);
                     this.isStopped = true;
-                    var v = this.value;
-                    var hv = this.hasValue;
+                    var os = this.observers.slice(0),
+                        v = this.value,
+                        hv = this.hasValue;
 
                     if (hv) {
                         for (i = 0, len = os.length; i < len; i++) {

@@ -22,7 +22,7 @@
 
     // Because of build optimizers
     if (typeof define === 'function' && define.amd) {
-        define(['rx', 'exports'], function (Rx, exports) {
+        define(['rx.binding', 'exports'], function (Rx, exports) {
             root.Rx = factory(root, exports, Rx);
             return root.Rx;
         });
@@ -35,12 +35,12 @@
     
     // Aliases
     var Observable = Rx.Observable,
+    	observableProto = Observable.prototype,
         AnonymousObservable = Rx.Internals.AnonymousObservable,
         AsyncSubject = Rx.AsyncSubject,
         disposableCreate = Rx.Disposable.create,
         CompositeDisposable= Rx.CompositeDisposable,
-        AsyncSubject = Rx.AsyncSubject
-        timeoutScheduler = Rx.Scheduler.timeout,
+        immediateScheduler = Rx.Scheduler.immediate,
         slice = Array.prototype.slice;
 
     /**
@@ -108,37 +108,36 @@
      * @returns {Function} A function, when executed with the required parameters minus the callback, produces an Observable sequence with a single value of the arguments to the callback as an array.
      */
     Observable.fromCallback = function (func, scheduler, context, selector) {
-        scheduler || (scheduler = timeoutScheduler);
+        scheduler || (scheduler = immediateScheduler);
         return function () {
-            var args = slice.call(arguments, 0), 
-                subject = new AsyncSubject();
+            var args = slice.call(arguments, 0);
 
-            scheduler.schedule(function () {
-                function handler(e) {
-                    var results = e;
-                    
-                    if (selector) {
-                        try {
-                            results = selector(arguments);
-                        } catch (err) {
-                            subject.onError(err);
-                            return;
+            return new AnonymousObservable(function (observer) {
+                return scheduler.schedule(function () {
+                    function handler(e) {
+                        var results = e;
+                        
+                        if (selector) {
+                            try {
+                                results = selector(arguments);
+                            } catch (err) {
+                                observer.onError(err);
+                                return;
+                            }
+                        } else {
+                            if (results.length === 1) {
+                                results = results[0];
+                            }
                         }
-                    } else {
-                        if (results.length === 1) {
-                            results = results[0];
-                        }
+
+                        observer.onNext(results);
+                        observer.onCompleted();
                     }
 
-                    subject.onNext(results);
-                    subject.onCompleted();
-                }
-
-                args.push(handler);
-                func.apply(context, args);
+                    args.push(handler);
+                    func.apply(context, args);
+                });
             });
-
-            return subject.asObservable();
         };
     };
 
@@ -151,42 +150,42 @@
      * @returns {Function} An async function which when applied, returns an observable sequence with the callback arguments as an array.
      */
     Observable.fromNodeCallback = function (func, scheduler, context, selector) {
-        scheduler || (scheduler = timeoutScheduler);
+        scheduler || (scheduler = immediateScheduler);
         return function () {
-            var args = slice.call(arguments, 0), 
-                subject = new AsyncSubject();
+            var args = slice.call(arguments, 0);
 
-            scheduler.schedule(function () {
-                function handler(err) {
-                    if (err) {
-                        subject.onError(err);
-                        return;
-                    }
-
-                    var results = slice.call(arguments, 1);
+            return new AnonymousObservable(function (observer) {
+                return scheduler.schedule(function () {
                     
-                    if (selector) {
-                        try {
-                            results = selector(results);
-                        } catch (e) {
-                            subject.onError(e);
+                    function handler(err) {
+                        if (err) {
+                            observer.onError(err);
                             return;
                         }
-                    } else {
-                        if (results.length === 1) {
-                            results = results[0];
+
+                        var results = slice.call(arguments, 1);
+                        
+                        if (selector) {
+                            try {
+                                results = selector(results);
+                            } catch (e) {
+                                observer.onError(e);
+                                return;
+                            }
+                        } else {
+                            if (results.length === 1) {
+                                results = results[0];
+                            }
                         }
+
+                        observer.onNext(results);
+                        observer.onCompleted();
                     }
 
-                    subject.onNext(results);
-                    subject.onCompleted();
-                }
-
-                args.push(handler);
-                func.apply(context, args);
+                    args.push(handler);
+                    func.apply(context, args);
+                });
             });
-
-            return subject.asObservable();
         };
     };
 
@@ -289,18 +288,40 @@
      * @returns {Observable} An Observable sequence which wraps the existing promise success and failure.
      */
     Observable.fromPromise = function (promise) {
-        var subject = new AsyncSubject();
-        
-        promise.then(
-            function (value) {
-                subject.onNext(value);
-                subject.onCompleted();
-            }, 
-            function (reason) {
-               subject.onError(reason);
+        return new AnonymousObservable(function (observer) {
+            promise.then(
+                function (value) {
+                    observer.onNext(value);
+                    observer.onCompleted();
+                }, 
+                function (reason) {
+                   observer.onError(reason);
+                });
+        });
+    };
+    /*
+     * Converts an existing observable sequence to an ES6 Compatible Promise
+     * @example
+     * var promise = Rx.Observable.return(42).toPromise(RSVP.Promise);
+     * @param {Function} The constructor of the promise
+     * @returns {Promise} An ES6 compatible promise with the last value from the observable sequence.
+     */
+    observableProto.toPromise = function (promiseCtor) {
+        var source = this;
+        return new promiseCtor(function (resolve, reject) {
+            // No cancellation can be done
+            var value, hasValue = false;
+            source.subscribe(function (v) {
+                value = v;
+                hasValue = true;
+            }, function (err) {
+                reject(err);
+            }, function () {
+                if (hasValue) {
+                    resolve(value);
+                }
             });
-            
-        return subject.asObservable();
+        });
     };
     return Rx;
 }));

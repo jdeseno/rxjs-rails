@@ -46,10 +46,6 @@ Available js files:
 ## versions
 
 ```
-+------------+---------+
-| rxjs-rails |  rxjs   |
-+------------+---------+
-| 0.0.1      | 2.2.9   |
-+------------+---------+
+Version now mirrors RxJS release
 ```
 
