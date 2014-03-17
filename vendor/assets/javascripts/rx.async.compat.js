@@ -36,12 +36,14 @@
     // Aliases
     var Observable = Rx.Observable,
     	observableProto = Observable.prototype,
-        AnonymousObservable = Rx.Internals.AnonymousObservable,
-        AsyncSubject = Rx.AsyncSubject,
-        disposableCreate = Rx.Disposable.create,
-        CompositeDisposable= Rx.CompositeDisposable,
-        immediateScheduler = Rx.Scheduler.immediate,
-        slice = Array.prototype.slice;
+      observableFromPromise = Observable.fromPromise,
+      observableThrow = Observable.throwException,
+      AnonymousObservable = Rx.AnonymousObservable,
+      AsyncSubject = Rx.AsyncSubject,
+      disposableCreate = Rx.Disposable.create,
+      CompositeDisposable= Rx.CompositeDisposable,
+      immediateScheduler = Rx.Scheduler.immediate,
+      slice = Array.prototype.slice;
 
     /**
      * Invokes the specified function asynchronously on the specified scheduler, surfacing the result through an observable sequence.
@@ -352,46 +354,20 @@
         }).publish().refCount();
     };
 
-    /**
-     * Converts a Promise to an Observable sequence
-     * @param {Promise} A Promises A+ implementation instance.
-     * @returns {Observable} An Observable sequence which wraps the existing promise success and failure.
-     */
-    Observable.fromPromise = function (promise) {
-        return new AnonymousObservable(function (observer) {
-            promise.then(
-                function (value) {
-                    observer.onNext(value);
-                    observer.onCompleted();
-                }, 
-                function (reason) {
-                   observer.onError(reason);
-                });
-        });
-    };
-    /*
-     * Converts an existing observable sequence to an ES6 Compatible Promise
-     * @example
-     * var promise = Rx.Observable.return(42).toPromise(RSVP.Promise);
-     * @param {Function} The constructor of the promise
-     * @returns {Promise} An ES6 compatible promise with the last value from the observable sequence.
-     */
-    observableProto.toPromise = function (promiseCtor) {
-        var source = this;
-        return new promiseCtor(function (resolve, reject) {
-            // No cancellation can be done
-            var value, hasValue = false;
-            source.subscribe(function (v) {
-                value = v;
-                hasValue = true;
-            }, function (err) {
-                reject(err);
-            }, function () {
-                if (hasValue) {
-                    resolve(value);
-                }
-            });
-        });
-    };
+  /**
+   * Invokes the asynchronous function, surfacing the result through an observable sequence.
+   * @param {Function} functionAsync Asynchronous function which returns a Promise to run.
+   * @returns {Observable} An observable sequence exposing the function's result value, or an exception.
+   */
+  Observable.startAsync = function (functionAsync) {
+    var promise;
+    try {
+      promise = functionAsync();
+    } catch (e) {
+      return observableThrow(e);
+    }
+    return observableFromPromise(promise);
+  }
+
     return Rx;
 }));
