@@ -14,13 +14,15 @@ Reference the appropriate rx.js file in your application.js eg:
 
 For available files look in [vendor/assets](https://github.com/jdeseno/rxjs-rails/tree/master/vendor/assets/javascripts)
 
-```
-Version now mirrors RxJS release
-```
+## Version
+
+Version mirrors RxJS release
 
 ## License
 
-Gem is licensed MIT. Copyright and license for RxJS content is under it's own terms.
-See [RxJS](https://github.com/Reactive-Extensions/RxJS#license) for information.
+Gem is licensed MIT.
+
+Copyright and license for RxJS content is under it's own terms.
+See the [RxJS website](https://github.com/Reactive-Extensions/RxJS#license) for information.
 A copy of the RxJS license is distributed as [rxjs_license.txt](https://github.com/jdeseno/rxjs-rails/tree/master/rxjs_license.txt).
 
