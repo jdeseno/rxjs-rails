@@ -25,18 +25,21 @@
       internals: {}, 
       config: {
         Promise: root.Promise // Detect if promise exists
-      } 
+      },
+      helpers: { }
   };
     
   // Defaults
-  function noop() { }
-  function identity(x) { return x; }
-  var defaultNow = (function () { return !!Date.now ? Date.now : function () { return +new Date; }; }());
-  function defaultComparer(x, y) { return isEqual(x, y); }
-  function defaultSubComparer(x, y) { return x - y; }
-  function defaultKeySerializer(x) { return x.toString(); }
-  function defaultError(err) { throw err; }
-  function isPromise(p) { return typeof p.then === 'function' && p.then !== Rx.Observable.prototype.then; }
+  var noop = Rx.helpers.noop = function () { },
+    identity = Rx.helpers.identity = function (x) { return x; },
+    defaultNow = Rx.helpers.defaultNow = (function () { return !!Date.now ? Date.now : function () { return +new Date; }; }()),
+    defaultComparer = Rx.helpers.defaultComparer = function (x, y) { return isEqual(x, y); },
+    defaultSubComparer = Rx.helpers.defaultSubComparer = function (x, y) { return x > y ? 1 : (x < y ? -1 : 0); },
+    defaultKeySerializer = Rx.helpers.defaultKeySerializer = function (x) { return x.toString(); },
+    defaultError = Rx.helpers.defaultError = function (err) { throw err; },
+    isPromise = Rx.helpers.isPromise = function (p) { return typeof p.then === 'function' && p.then !== Rx.Observable.prototype.then; },
+    asArray = Rx.helpers.asArray = function () { return Array.prototype.slice.call(arguments); },
+    not = Rx.helpers.not = function (a) { return !a; };
 
   // Errors
   var sequenceContainsNoElements = 'Sequence contains no elements.';
@@ -1578,9 +1581,13 @@
             return;
           }
 
+          // Check if promise
+          var currentValue = currentItem.value;
+          isPromise(currentValue) && (currentValue = observableFromPromise(currentValue));
+
           var d = new SingleAssignmentDisposable();
           subscription.setDisposable(d);
-          d.setDisposable(currentItem.value.subscribe(
+          d.setDisposable(currentValue.subscribe(
             observer.onNext.bind(observer),
             observer.onError.bind(observer),
             function () { self(); })
@@ -1627,9 +1634,13 @@
           return;
         }
 
+        // Check if promise
+        var currentValue = currentItem.value;
+        isPromise(currentValue) && (currentValue = observableFromPromise(currentValue));        
+
         var d = new SingleAssignmentDisposable();
         subscription.setDisposable(d);
-        d.setDisposable(currentItem.value.subscribe(
+        d.setDisposable(currentValue.subscribe(
           observer.onNext.bind(observer),
           function (exn) {
             lastException = exn;
@@ -2026,6 +2037,9 @@
             } catch (e) {
                 return observableThrow(e).subscribe(observer);
             }
+
+            // Check if promise
+            isPromise(result) && (result = observableFromPromise(result));
             return result.subscribe(observer);
         });
     };
@@ -3433,168 +3447,190 @@
         };
     };
 
-    function fixEvent(event) {
-        var stopPropagation = function () {
-            this.cancelBubble = true;
-        };
-
-        var preventDefault = function () {
-            this.bubbledKeyCode = this.keyCode;
-            if (this.ctrlKey) {
-                try {
-                    this.keyCode = 0;
-                } catch (e) { }
-            }
-            this.defaultPrevented = true;
-            this.returnValue = false;
-            this.modified = true;
-        };
-
-        event || (event = window.event);
-        if (!event.target) {
-            event.target = event.target || event.srcElement; 
-
-            if (event.type == 'mouseover') {
-                event.relatedTarget = event.fromElement;
-            }
-            if (event.type == 'mouseout') {
-                event.relatedTarget = event.toElement;
-            }
-            // Adding stopPropogation and preventDefault to IE
-            if (!event.stopPropagation){
-                event.stopPropagation = stopPropagation;
-                event.preventDefault = preventDefault;
-            }
-            // Normalize key events
-            switch(event.type){
-                case 'keypress':
-                    var c = ('charCode' in event ? event.charCode : event.keyCode);
-                    if (c == 10) {
-                        c = 0;
-                        event.keyCode = 13;
-                    } else if (c == 13 || c == 27) {
-                        c = 0; 
-                    } else if (c == 3) {
-                        c = 99; 
-                    }
-                    event.charCode = c;
-                    event.keyChar = event.charCode ? String.fromCharCode(event.charCode) : '';
-                    break;
-            }                    
-        }
-
-        return event;
-    }
-
-    function createListener (element, name, handler) {
-        // Node.js specific
-        if (element.addListener) {
-            element.addListener(name, handler);
-            return disposableCreate(function () {
-                element.removeListener(name, handler);
-            });
-        }
-        // Standards compliant
-        if (element.addEventListener) {
-            element.addEventListener(name, handler, false);
-            return disposableCreate(function () {
-                element.removeEventListener(name, handler, false);
-            });
-        } else if (element.attachEvent) {
-            // IE Specific
-            var innerHandler = function (event) {
-                handler(fixEvent(event));
-            };
-            element.attachEvent('on' + name, innerHandler);
-            return disposableCreate(function () {
-                element.detachEvent('on' + name, innerHandler);
-            });         
-        } else {
-            // Level 1 DOM Events      
-            element['on' + name] = handler;
-            return disposableCreate(function () {
-                element['on' + name] = null;
-            });
-        }
-    }
-
-    function createEventListener (el, eventName, handler) {
-        var disposables = new CompositeDisposable();
-
-        // Asume NodeList
-        if (el && el.length) {
-            for (var i = 0, len = el.length; i < len; i++) {
-                disposables.add(createEventListener(el[i], eventName, handler));
-            }
-        } else if (el) {
-            disposables.add(createListener(el, eventName, handler));
-        }
-
-        return disposables;
-    }
-
-    /**
-     * Creates an observable sequence by adding an event listener to the matching DOMElement or each item in the NodeList.
-     *
-     * @example
-     *   var source = Rx.Observable.fromEvent(element, 'mouseup');
-     * 
-     * @param {Object} element The DOMElement or NodeList to attach a listener.
-     * @param {String} eventName The event name to attach the observable sequence.
-     * @param {Function} [selector] A selector which takes the arguments from the event handler to produce a single item to yield on next.
-     * @returns {Observable} An observable sequence of events from the specified element and the specified event.
-     */
-    Observable.fromEvent = function (element, eventName, selector) {
-        return new AnonymousObservable(function (observer) {
-            return createEventListener(
-                element, 
-                eventName, 
-                function handler (e) { 
-                    var results = e;
-
-                    if (selector) {
-                        try {
-                            results = selector(arguments);
-                        } catch (err) {
-                            observer.onError(err);
-                            return
-                        }
-                    }
-
-                    observer.onNext(results); 
-                });
-        }).publish().refCount();
+  function fixEvent(event) {
+    var stopPropagation = function () {
+      this.cancelBubble = true;
     };
-    /**
-     * Creates an observable sequence from an event emitter via an addHandler/removeHandler pair.
-     * @param {Function} addHandler The function to add a handler to the emitter.
-     * @param {Function} [removeHandler] The optional function to remove a handler from an emitter.
-     * @param {Function} [selector] A selector which takes the arguments from the event handler to produce a single item to yield on next.
-     * @returns {Observable} An observable sequence which wraps an event from an event emitter
-     */
-    Observable.fromEventPattern = function (addHandler, removeHandler, selector) {
-        return new AnonymousObservable(function (observer) {
-            function innerHandler (e) {
-                var result = e;
-                if (selector) {
-                    try {
-                        result = selector(arguments);
-                    } catch (err) {
-                        observer.onError(err);
-                        return;
-                    }
-                }
-                observer.onNext(result);
-            }
 
-            var returnValue = addHandler(innerHandler);
-            return disposableCreate(function () {
-                if (removeHandler) {
-                    removeHandler(innerHandler, returnValue);
-                }
-            });
-        }).publish().refCount();
+    var preventDefault = function () {
+      this.bubbledKeyCode = this.keyCode;
+      if (this.ctrlKey) {
+        try {
+          this.keyCode = 0;
+        } catch (e) { }
+      }
+      this.defaultPrevented = true;
+      this.returnValue = false;
+      this.modified = true;
     };
+
+    event || (event = root.event);
+    if (!event.target) {
+      event.target = event.target || event.srcElement; 
+
+      if (event.type == 'mouseover') {
+        event.relatedTarget = event.fromElement;
+      }
+      if (event.type == 'mouseout') {
+        event.relatedTarget = event.toElement;
+      }
+      // Adding stopPropogation and preventDefault to IE
+      if (!event.stopPropagation){
+        event.stopPropagation = stopPropagation;
+        event.preventDefault = preventDefault;
+      }
+      // Normalize key events
+      switch(event.type){
+        case 'keypress':
+          var c = ('charCode' in event ? event.charCode : event.keyCode);
+          if (c == 10) {
+            c = 0;
+            event.keyCode = 13;
+          } else if (c == 13 || c == 27) {
+            c = 0; 
+          } else if (c == 3) {
+            c = 99; 
+          }
+          event.charCode = c;
+          event.keyChar = event.charCode ? String.fromCharCode(event.charCode) : '';
+          break;
+      }                    
+    }
+
+    return event;
+  }
+
+  function createListener (element, name, handler) {
+    // Node.js specific
+    if (element.addListener) {
+      element.addListener(name, handler);
+      return disposableCreate(function () {
+        element.removeListener(name, handler);
+      });
+    }
+    // Standards compliant
+    if (element.addEventListener) {
+      element.addEventListener(name, handler, false);
+      return disposableCreate(function () {
+        element.removeEventListener(name, handler, false);
+      });
+    } 
+    if (element.attachEvent) {
+      // IE Specific
+      var innerHandler = function (event) {
+        handler(fixEvent(event));
+      };
+      element.attachEvent('on' + name, innerHandler);
+      return disposableCreate(function () {
+        element.detachEvent('on' + name, innerHandler);
+      });         
+    }
+    // Level 1 DOM Events      
+    element['on' + name] = handler;
+    return disposableCreate(function () {
+      element['on' + name] = null;
+    });
+  }
+
+  function createEventListener (el, eventName, handler) {
+    var disposables = new CompositeDisposable();
+
+    // Asume NodeList
+    if (typeof el.item === 'function' && typeof el.length === 'number') {
+      for (var i = 0, len = el.length; i < len; i++) {
+        disposables.add(createEventListener(el.item(i), eventName, handler));
+      }
+    } else if (el) {
+      disposables.add(createListener(el, eventName, handler));
+    }
+
+    return disposables;
+  }
+
+  // Check for Angular/jQuery/Zepto support
+  var jq =
+   !!root.angular && !!angular.element ? angular.element :
+   (!!root.jQuery ? root.jQuery : (
+     !!root.Zepto ? root.Zepto : null));
+
+  // Check for ember
+  var ember = !!root.Ember && typeof root.Ember.addListener === 'function';
+
+  /**
+   * Creates an observable sequence by adding an event listener to the matching DOMElement or each item in the NodeList.
+   *
+   * @example
+   *   var source = Rx.Observable.fromEvent(element, 'mouseup');
+   * 
+   * @param {Object} element The DOMElement or NodeList to attach a listener.
+   * @param {String} eventName The event name to attach the observable sequence.
+   * @param {Function} [selector] A selector which takes the arguments from the event handler to produce a single item to yield on next.     
+   * @returns {Observable} An observable sequence of events from the specified element and the specified event.
+   */
+  Observable.fromEvent = function (element, eventName, selector) {
+    if (ember) {
+      return fromEventPattern(
+        function (h) { Ember.addListener(element, eventName); },
+        function (h) { Ember.removeListener(element, eventName); },
+        selector);
+    }    
+    if (jq) {
+      var $elem = jq(elem);
+      return fromEventPattern(
+        function (h) { $elem.on(eventName, h); },
+        function (h) { $elem.off(eventName, h); },
+        selector);
+    }
+    return new AnonymousObservable(function (observer) {
+      return createEventListener(
+        element, 
+        eventName, 
+        function handler (e) { 
+          var results = e;
+
+          if (selector) {
+            try {
+              results = selector(arguments);
+            } catch (err) {
+              observer.onError(err);
+              return
+            }
+          }
+
+          observer.onNext(results); 
+        });
+    }).publish().refCount();
+  };
+  /**
+   * Creates an observable sequence from an event emitter via an addHandler/removeHandler pair.
+   * @param {Function} addHandler The function to add a handler to the emitter.
+   * @param {Function} [removeHandler] The optional function to remove a handler from an emitter.
+   * @param {Function} [selector] A selector which takes the arguments from the event handler to produce a single item to yield on next.
+   * @returns {Observable} An observable sequence which wraps an event from an event emitter
+   */
+  var fromEventPattern = Observable.fromEventPattern = function (addHandler, removeHandler, selector) {
+    return new AnonymousObservable(function (observer) {
+      function innerHandler (e) {
+        var result = e;
+        if (selector) {
+          try {
+            result = selector(arguments);
+          } catch (err) {
+            observer.onError(err);
+            return;
+          }
+        }
+        observer.onNext(result);
+      }
+
+      var returnValue = addHandler(innerHandler);
+      return disposableCreate(function () {
+        if (removeHandler) {
+          removeHandler(innerHandler, returnValue);
+        }
+      });
+    }).publish().refCount();
+  };
 
   /**
    * Converts a Promise to an Observable sequence
@@ -3611,6 +3647,12 @@
         function (reason) {
           observer.onError(reason);
         });
+
+      return function () {
+        if (promise && promise.abort) {
+          promise.abort();
+        }
+      }
     });
   };
     /*
@@ -4674,22 +4716,16 @@
         });
     };
 
-  /**
-   * Pauses the underlying observable sequence based upon the observable sequence which yields true/false.
-   * @example
-   * var pauser = new Rx.Subject();
-   * var source = Rx.Observable.interval(100).pausable(pauser);
-   * @param {Observable} pauser The observable sequence used to pause the underlying sequence.
-   * @returns {Observable} The observable sequence which is paused based upon the pauser.
-   */
-  observableProto.pausable = function (pauser) {
-    var self = this;
-    return new AnonymousObservable(function (observer) {
-      var conn = self.publish(),
+  var PausableObservable = (function (_super) {
+
+    inherits(PausableObservable, _super);
+
+    function subscribe(observer) {
+      var conn = this.source.publish(),
         subscription = conn.subscribe(observer),
         connection = disposableEmpty;
 
-      var pausable = pauser.distinctUntilChanged().subscribe(function (b) {
+      var pausable = this.subject.distinctUntilChanged().subscribe(function (b) {
         if (b) {
           connection = conn.connect();
         } else {
@@ -4699,7 +4735,45 @@
       });
 
       return new CompositeDisposable(subscription, connection, pausable);
-    });
+    }
+
+    function PausableObservable(source, subject) {
+      this.source = source;
+      this.subject = subject || new Subject();
+      this.isPaused = true;
+      _super.call(this, subscribe);
+    }
+
+    PausableObservable.prototype.pause = function () {
+      if (this.isPaused === true){
+        return;
+      }
+      this.isPaused = true;
+      this.subject.onNext(false);
+    };
+
+    PausableObservable.prototype.resume = function () {
+      if (this.isPaused === false){
+        return;
+      }
+      this.isPaused = false;
+      this.subject.onNext(true);
+    };
+
+    return PausableObservable;
+
+  }(Observable));
+
+  /**
+   * Pauses the underlying observable sequence based upon the observable sequence which yields true/false.
+   * @example
+   * var pauser = new Rx.Subject();
+   * var source = Rx.Observable.interval(100).pausable(pauser);
+   * @param {Observable} pauser The observable sequence used to pause the underlying sequence.
+   * @returns {Observable} The observable sequence which is paused based upon the pauser.
+   */
+  observableProto.pausable = function (pauser) {
+    return new PausableObservable(this, pauser);
   };
   function combineLatestSource(source, subject, resultSelector) {
     return new AnonymousObservable(function (observer) {
@@ -4745,24 +4819,17 @@
     });
   }
 
-  /**
-   * Pauses the underlying observable sequence based upon the observable sequence which yields true/false,
-   * and yields the values that were buffered while paused.
-   * @example
-   * var pauser = new Rx.Subject();
-   * var source = Rx.Observable.interval(100).pausableBuffered(pauser);
-   * @param {Observable} pauser The observable sequence used to pause the underlying sequence.
-   * @returns {Observable} The observable sequence which is paused based upon the pauser.
-   */  
-  observableProto.pausableBuffered = function (subject) {
-    var source = this;
-    return new AnonymousObservable(function (observer) {
+  var PausableBufferedObservable = (function (_super) {
+
+    inherits(PausableBufferedObservable, _super);
+
+    function subscribe(observer) {
       var q = [], previous = true;
       
       var subscription =  
         combineLatestSource(
-          source,
-          subject.distinctUntilChanged(), 
+          this.source,
+          this.subject.distinctUntilChanged(), 
           function (data, shouldFire) {
             return { data: data, shouldFire: shouldFire };      
           })
@@ -4787,10 +4854,49 @@
             observer.onCompleted.bind(observer)
           );
 
-      subject.onNext(false);
+      this.subject.onNext(false);
 
-      return subscription;
-    });
+      return subscription;      
+    }
+
+    function PausableBufferedObservable(source, subject) {
+      this.source = source;
+      this.subject = subject || new Subject();
+      this.isPaused = true;
+      _super.call(this, subscribe);
+    }
+
+    PausableBufferedObservable.prototype.pause = function () {
+      if (this.isPaused === true){
+        return;
+      }
+      this.isPaused = true;
+      this.subject.onNext(false);
+    };
+
+    PausableBufferedObservable.prototype.resume = function () {
+      if (this.isPaused === false){
+        return;
+      }
+      this.isPaused = false;
+      this.subject.onNext(true);
+    };
+
+    return PausableBufferedObservable; 
+
+  }(Observable));
+
+  /**
+   * Pauses the underlying observable sequence based upon the observable sequence which yields true/false,
+   * and yields the values that were buffered while paused.
+   * @example
+   * var pauser = new Rx.Subject();
+   * var source = Rx.Observable.interval(100).pausableBuffered(pauser);
+   * @param {Observable} pauser The observable sequence used to pause the underlying sequence.
+   * @returns {Observable} The observable sequence which is paused based upon the pauser.
+   */  
+  observableProto.pausableBuffered = function (subject) {
+    return new PausableBufferedObservable(this, subject);
   };
 
   /**

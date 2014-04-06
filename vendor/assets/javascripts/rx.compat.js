@@ -25,18 +25,21 @@
       internals: {}, 
       config: {
         Promise: root.Promise // Detect if promise exists
-      } 
+      },
+      helpers: { }
   };
     
   // Defaults
-  function noop() { }
-  function identity(x) { return x; }
-  var defaultNow = (function () { return !!Date.now ? Date.now : function () { return +new Date; }; }());
-  function defaultComparer(x, y) { return isEqual(x, y); }
-  function defaultSubComparer(x, y) { return x - y; }
-  function defaultKeySerializer(x) { return x.toString(); }
-  function defaultError(err) { throw err; }
-  function isPromise(p) { return typeof p.then === 'function' && p.then !== Rx.Observable.prototype.then; }
+  var noop = Rx.helpers.noop = function () { },
+    identity = Rx.helpers.identity = function (x) { return x; },
+    defaultNow = Rx.helpers.defaultNow = (function () { return !!Date.now ? Date.now : function () { return +new Date; }; }()),
+    defaultComparer = Rx.helpers.defaultComparer = function (x, y) { return isEqual(x, y); },
+    defaultSubComparer = Rx.helpers.defaultSubComparer = function (x, y) { return x > y ? 1 : (x < y ? -1 : 0); },
+    defaultKeySerializer = Rx.helpers.defaultKeySerializer = function (x) { return x.toString(); },
+    defaultError = Rx.helpers.defaultError = function (err) { throw err; },
+    isPromise = Rx.helpers.isPromise = function (p) { return typeof p.then === 'function' && p.then !== Rx.Observable.prototype.then; },
+    asArray = Rx.helpers.asArray = function () { return Array.prototype.slice.call(arguments); },
+    not = Rx.helpers.not = function (a) { return !a; };
 
   // Errors
   var sequenceContainsNoElements = 'Sequence contains no elements.';
@@ -1689,9 +1692,13 @@
             return;
           }
 
+          // Check if promise
+          var currentValue = currentItem.value;
+          isPromise(currentValue) && (currentValue = observableFromPromise(currentValue));
+
           var d = new SingleAssignmentDisposable();
           subscription.setDisposable(d);
-          d.setDisposable(currentItem.value.subscribe(
+          d.setDisposable(currentValue.subscribe(
             observer.onNext.bind(observer),
             observer.onError.bind(observer),
             function () { self(); })
@@ -1738,9 +1745,13 @@
           return;
         }
 
+        // Check if promise
+        var currentValue = currentItem.value;
+        isPromise(currentValue) && (currentValue = observableFromPromise(currentValue));        
+
         var d = new SingleAssignmentDisposable();
         subscription.setDisposable(d);
-        d.setDisposable(currentItem.value.subscribe(
+        d.setDisposable(currentValue.subscribe(
           observer.onNext.bind(observer),
           function (exn) {
             lastException = exn;
@@ -2259,6 +2270,12 @@
         function (reason) {
           observer.onError(reason);
         });
+
+      return function () {
+        if (promise && promise.abort) {
+          promise.abort();
+        }
+      }
     });
   };
     /*
@@ -2324,6 +2341,9 @@
             } catch (e) {
                 return observableThrow(e).subscribe(observer);
             }
+
+            // Check if promise
+            isPromise(result) && (result = observableFromPromise(result));
             return result.subscribe(observer);
         });
     };

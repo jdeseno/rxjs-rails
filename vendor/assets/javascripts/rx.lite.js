@@ -25,18 +25,21 @@
       internals: {}, 
       config: {
         Promise: root.Promise // Detect if promise exists
-      } 
+      },
+      helpers: { }
   };
     
   // Defaults
-  function noop() { }
-  function identity(x) { return x; }
-  var defaultNow = Date.now;
-  function defaultComparer(x, y) { return isEqual(x, y); }
-  function defaultSubComparer(x, y) { return x - y; }
-  function defaultKeySerializer(x) { return x.toString(); }
-  function defaultError(err) { throw err; }
-  function isPromise(p) { return typeof p.then === 'function' && p.then !== Rx.Observable.prototype.then; }
+  var noop = Rx.helpers.noop = function () { },
+    identity = Rx.helpers.identity = function (x) { return x; },
+    defaultNow = Rx.helpers.defaultNow = Date.now,
+    defaultComparer = Rx.helpers.defaultComparer = function (x, y) { return isEqual(x, y); },
+    defaultSubComparer = Rx.helpers.defaultSubComparer = function (x, y) { return x > y ? 1 : (x < y ? -1 : 0); },
+    defaultKeySerializer = Rx.helpers.defaultKeySerializer = function (x) { return x.toString(); },
+    defaultError = Rx.helpers.defaultError = function (err) { throw err; },
+    isPromise = Rx.helpers.isPromise = function (p) { return typeof p.then === 'function' && p.then !== Rx.Observable.prototype.then; },
+    asArray = Rx.helpers.asArray = function () { return Array.prototype.slice.call(arguments); },
+    not = Rx.helpers.not = function (a) { return !a; };
 
   // Errors
   var sequenceContainsNoElements = 'Sequence contains no elements.';
@@ -1460,9 +1463,13 @@
             return;
           }
 
+          // Check if promise
+          var currentValue = currentItem.value;
+          isPromise(currentValue) && (currentValue = observableFromPromise(currentValue));
+
           var d = new SingleAssignmentDisposable();
           subscription.setDisposable(d);
-          d.setDisposable(currentItem.value.subscribe(
+          d.setDisposable(currentValue.subscribe(
             observer.onNext.bind(observer),
             observer.onError.bind(observer),
             function () { self(); })
@@ -1509,9 +1516,13 @@
           return;
         }
 
+        // Check if promise
+        var currentValue = currentItem.value;
+        isPromise(currentValue) && (currentValue = observableFromPromise(currentValue));        
+
         var d = new SingleAssignmentDisposable();
         subscription.setDisposable(d);
-        d.setDisposable(currentItem.value.subscribe(
+        d.setDisposable(currentValue.subscribe(
           observer.onNext.bind(observer),
           function (exn) {
             lastException = exn;
@@ -1908,6 +1919,9 @@
             } catch (e) {
                 return observableThrow(e).subscribe(observer);
             }
+
+            // Check if promise
+            isPromise(result) && (result = observableFromPromise(result));
             return result.subscribe(observer);
         });
     };
@@ -3315,98 +3329,122 @@
         };
     };
 
-    function createListener (element, name, handler) {
-        // Node.js specific
-        if (element.addListener) {
-            element.addListener(name, handler);
-            return disposableCreate(function () {
-                element.removeListener(name, handler);
-            });
-        } else if (element.addEventListener) {
-            element.addEventListener(name, handler, false);
-            return disposableCreate(function () {
-                element.removeEventListener(name, handler, false);
-            });
-        }
+  function createListener (element, name, handler) {
+    // Node.js specific
+    if (element.addListener) {
+      element.addListener(name, handler);
+      return disposableCreate(function () {
+        element.removeListener(name, handler);
+      });
+    } 
+    if (element.addEventListener) {
+      element.addEventListener(name, handler, false);
+      return disposableCreate(function () {
+        element.removeEventListener(name, handler, false);
+      });
+    }
+    throw new Error('No listener found');
+  }
+
+  function createEventListener (el, eventName, handler) {
+    var disposables = new CompositeDisposable();
+
+    // Asume NodeList
+    if (typeof el.item === 'function' && typeof el.length === 'number') {
+      for (var i = 0, len = el.length; i < len; i++) {
+        disposables.add(createEventListener(el.item(i), eventName, handler));
+      }
+    } else if (el) {
+      disposables.add(createListener(el, eventName, handler));
     }
 
-    function createEventListener (el, eventName, handler) {
-        var disposables = new CompositeDisposable();
+    return disposables;
+  }
 
-        // Asume NodeList
-        if (el && el.length) {
-            for (var i = 0, len = el.length; i < len; i++) {
-                disposables.add(createEventListener(el[i], eventName, handler));
-            }
-        } else if (el) {
-            disposables.add(createListener(el, eventName, handler));
-        }
+  // Check for Angular/jQuery/Zepto support
+  var jq =
+   !!root.angular && !!angular.element ? angular.element :
+   (!!root.jQuery ? root.jQuery : (
+     !!root.Zepto ? root.Zepto : null));
 
-        return disposables;
+  // Check for ember
+  var ember = !!root.Ember && typeof root.Ember.addListener === 'function';
+
+  /**
+   * Creates an observable sequence by adding an event listener to the matching DOMElement or each item in the NodeList.
+   *
+   * @example
+   *   var source = Rx.Observable.fromEvent(element, 'mouseup');
+   * 
+   * @param {Object} element The DOMElement or NodeList to attach a listener.
+   * @param {String} eventName The event name to attach the observable sequence.
+   * @param {Function} [selector] A selector which takes the arguments from the event handler to produce a single item to yield on next.     
+   * @returns {Observable} An observable sequence of events from the specified element and the specified event.
+   */
+  Observable.fromEvent = function (element, eventName, selector) {
+    if (ember) {
+      return fromEventPattern(
+        function (h) { Ember.addListener(element, eventName); },
+        function (h) { Ember.removeListener(element, eventName); },
+        selector);
+    }    
+    if (jq) {
+      var $elem = jq(elem);
+      return fromEventPattern(
+        function (h) { $elem.on(eventName, h); },
+        function (h) { $elem.off(eventName, h); },
+        selector);
     }
+    return new AnonymousObservable(function (observer) {
+      return createEventListener(
+        element, 
+        eventName, 
+        function handler (e) { 
+          var results = e;
 
-    /**
-     * Creates an observable sequence by adding an event listener to the matching DOMElement or each item in the NodeList.
-     *
-     * @example
-     *   var source = Rx.Observable.fromEvent(element, 'mouseup');
-     * 
-     * @param {Object} element The DOMElement or NodeList to attach a listener.
-     * @param {String} eventName The event name to attach the observable sequence.
-     * @param {Function} [selector] A selector which takes the arguments from the event handler to produce a single item to yield on next.     
-     * @returns {Observable} An observable sequence of events from the specified element and the specified event.
-     */
-    Observable.fromEvent = function (element, eventName, selector) {
-        return new AnonymousObservable(function (observer) {
-            return createEventListener(
-                element, 
-                eventName, 
-                function handler (e) { 
-                    var results = e;
-
-                    if (selector) {
-                        try {
-                            results = selector(arguments);
-                        } catch (err) {
-                            observer.onError(err);
-                            return
-                        }
-                    }
-
-                    observer.onNext(results); 
-                });
-        }).publish().refCount();
-    };
-    /**
-     * Creates an observable sequence from an event emitter via an addHandler/removeHandler pair.
-     * @param {Function} addHandler The function to add a handler to the emitter.
-     * @param {Function} [removeHandler] The optional function to remove a handler from an emitter.
-     * @param {Function} [selector] A selector which takes the arguments from the event handler to produce a single item to yield on next.
-     * @returns {Observable} An observable sequence which wraps an event from an event emitter
-     */
-    Observable.fromEventPattern = function (addHandler, removeHandler, selector) {
-        return new AnonymousObservable(function (observer) {
-            function innerHandler (e) {
-                var result = e;
-                if (selector) {
-                    try {
-                        result = selector(arguments);
-                    } catch (err) {
-                        observer.onError(err);
-                        return;
-                    }
-                }
-                observer.onNext(result);
+          if (selector) {
+            try {
+              results = selector(arguments);
+            } catch (err) {
+              observer.onError(err);
+              return
             }
+          }
 
-            var returnValue = addHandler(innerHandler);
-            return disposableCreate(function () {
-                if (removeHandler) {
-                    removeHandler(innerHandler, returnValue);
-                }
-            });
-        }).publish().refCount();
-    };
+          observer.onNext(results); 
+        });
+    }).publish().refCount();
+  };
+  /**
+   * Creates an observable sequence from an event emitter via an addHandler/removeHandler pair.
+   * @param {Function} addHandler The function to add a handler to the emitter.
+   * @param {Function} [removeHandler] The optional function to remove a handler from an emitter.
+   * @param {Function} [selector] A selector which takes the arguments from the event handler to produce a single item to yield on next.
+   * @returns {Observable} An observable sequence which wraps an event from an event emitter
+   */
+  var fromEventPattern = Observable.fromEventPattern = function (addHandler, removeHandler, selector) {
+    return new AnonymousObservable(function (observer) {
+      function innerHandler (e) {
+        var result = e;
+        if (selector) {
+          try {
+            result = selector(arguments);
+          } catch (err) {
+            observer.onError(err);
+            return;
+          }
+        }
+        observer.onNext(result);
+      }
+
+      var returnValue = addHandler(innerHandler);
+      return disposableCreate(function () {
+        if (removeHandler) {
+          removeHandler(innerHandler, returnValue);
+        }
+      });
+    }).publish().refCount();
+  };
 
   /**
    * Converts a Promise to an Observable sequence
@@ -3423,6 +3461,12 @@
         function (reason) {
           observer.onError(reason);
         });
+
+      return function () {
+        if (promise && promise.abort) {
+          promise.abort();
+        }
+      }
     });
   };
     /*
@@ -4486,22 +4530,16 @@
         });
     };
 
-  /**
-   * Pauses the underlying observable sequence based upon the observable sequence which yields true/false.
-   * @example
-   * var pauser = new Rx.Subject();
-   * var source = Rx.Observable.interval(100).pausable(pauser);
-   * @param {Observable} pauser The observable sequence used to pause the underlying sequence.
-   * @returns {Observable} The observable sequence which is paused based upon the pauser.
-   */
-  observableProto.pausable = function (pauser) {
-    var self = this;
-    return new AnonymousObservable(function (observer) {
-      var conn = self.publish(),
+  var PausableObservable = (function (_super) {
+
+    inherits(PausableObservable, _super);
+
+    function subscribe(observer) {
+      var conn = this.source.publish(),
         subscription = conn.subscribe(observer),
         connection = disposableEmpty;
 
-      var pausable = pauser.distinctUntilChanged().subscribe(function (b) {
+      var pausable = this.subject.distinctUntilChanged().subscribe(function (b) {
         if (b) {
           connection = conn.connect();
         } else {
@@ -4511,7 +4549,45 @@
       });
 
       return new CompositeDisposable(subscription, connection, pausable);
-    });
+    }
+
+    function PausableObservable(source, subject) {
+      this.source = source;
+      this.subject = subject || new Subject();
+      this.isPaused = true;
+      _super.call(this, subscribe);
+    }
+
+    PausableObservable.prototype.pause = function () {
+      if (this.isPaused === true){
+        return;
+      }
+      this.isPaused = true;
+      this.subject.onNext(false);
+    };
+
+    PausableObservable.prototype.resume = function () {
+      if (this.isPaused === false){
+        return;
+      }
+      this.isPaused = false;
+      this.subject.onNext(true);
+    };
+
+    return PausableObservable;
+
+  }(Observable));
+
+  /**
+   * Pauses the underlying observable sequence based upon the observable sequence which yields true/false.
+   * @example
+   * var pauser = new Rx.Subject();
+   * var source = Rx.Observable.interval(100).pausable(pauser);
+   * @param {Observable} pauser The observable sequence used to pause the underlying sequence.
+   * @returns {Observable} The observable sequence which is paused based upon the pauser.
+   */
+  observableProto.pausable = function (pauser) {
+    return new PausableObservable(this, pauser);
   };
   function combineLatestSource(source, subject, resultSelector) {
     return new AnonymousObservable(function (observer) {
@@ -4557,24 +4633,17 @@
     });
   }
 
-  /**
-   * Pauses the underlying observable sequence based upon the observable sequence which yields true/false,
-   * and yields the values that were buffered while paused.
-   * @example
-   * var pauser = new Rx.Subject();
-   * var source = Rx.Observable.interval(100).pausableBuffered(pauser);
-   * @param {Observable} pauser The observable sequence used to pause the underlying sequence.
-   * @returns {Observable} The observable sequence which is paused based upon the pauser.
-   */  
-  observableProto.pausableBuffered = function (subject) {
-    var source = this;
-    return new AnonymousObservable(function (observer) {
+  var PausableBufferedObservable = (function (_super) {
+
+    inherits(PausableBufferedObservable, _super);
+
+    function subscribe(observer) {
       var q = [], previous = true;
       
       var subscription =  
         combineLatestSource(
-          source,
-          subject.distinctUntilChanged(), 
+          this.source,
+          this.subject.distinctUntilChanged(), 
           function (data, shouldFire) {
             return { data: data, shouldFire: shouldFire };      
           })
@@ -4599,10 +4668,49 @@
             observer.onCompleted.bind(observer)
           );
 
-      subject.onNext(false);
+      this.subject.onNext(false);
 
-      return subscription;
-    });
+      return subscription;      
+    }
+
+    function PausableBufferedObservable(source, subject) {
+      this.source = source;
+      this.subject = subject || new Subject();
+      this.isPaused = true;
+      _super.call(this, subscribe);
+    }
+
+    PausableBufferedObservable.prototype.pause = function () {
+      if (this.isPaused === true){
+        return;
+      }
+      this.isPaused = true;
+      this.subject.onNext(false);
+    };
+
+    PausableBufferedObservable.prototype.resume = function () {
+      if (this.isPaused === false){
+        return;
+      }
+      this.isPaused = false;
+      this.subject.onNext(true);
+    };
+
+    return PausableBufferedObservable; 
+
+  }(Observable));
+
+  /**
+   * Pauses the underlying observable sequence based upon the observable sequence which yields true/false,
+   * and yields the values that were buffered while paused.
+   * @example
+   * var pauser = new Rx.Subject();
+   * var source = Rx.Observable.interval(100).pausableBuffered(pauser);
+   * @param {Observable} pauser The observable sequence used to pause the underlying sequence.
+   * @returns {Observable} The observable sequence which is paused based upon the pauser.
+   */  
+  observableProto.pausableBuffered = function (subject) {
+    return new PausableBufferedObservable(this, subject);
   };
 
   /**
