@@ -6,7 +6,7 @@ task :sync_rxjs_repo do
   `cd tmp/RxJS && git pull`
 end
 
-desc 'update asset files to RxJS version'
+desc 'update asset files to RxJS version (vX.X.X)'
 task(:update, [:version] => :sync_rxjs_repo) do |t,args|
 
   `cd tmp/RxJS && git co -b #{args[:version]}`
@@ -14,6 +14,6 @@ task(:update, [:version] => :sync_rxjs_repo) do |t,args|
   `cd tmp/RxJS && grunt`
   `rm -f vendor/assets/javascipts/*.js`
   `cp tmp/RxJS/rx*js vendor/assets/javascripts/`
-
+  `m4 -D version=#{args[:version].gsub(/^v/i, '')} version.rb.m4 > lib/rxjs/rails/version.rb`
 end
 
