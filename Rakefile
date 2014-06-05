@@ -3,7 +3,7 @@ task :sync_rxjs_repo do
   unless Dir.exist?('tmp/RxJS')
     `git clone https://github.com/Reactive-Extensions/RxJS.git tmp/RxJS`
   end
-  `cd tmp/RxJS && git pull`
+  `cd tmp/RxJS && git fetch`
 end
 
 desc 'update asset files to RxJS version (vX.X.X)'
