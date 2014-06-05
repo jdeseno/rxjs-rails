@@ -42,7 +42,7 @@
     helpers = Rx.helpers,
     defaultComparer = helpers.defaultComparer,
     identity = helpers.identity,
-    subComparer = helpers.defaultSubComparer,
+    defaultSubComparer = helpers.defaultSubComparer,
     isPromise = helpers.isPromise,
     observableFromPromise = Observable.fromPromise;
 
@@ -50,6 +50,24 @@
   var argumentOutOfRange = 'Argument out of range',
       sequenceContainsNoElements = "Sequence contains no elements.";
   
+  observableProto.finalValue = function () {
+    var source = this;
+    return new AnonymousObservable(function (observer) {
+      var hasValue = false, value;
+      return source.subscribe(function (x) {
+        hasValue = true;
+        value = x;
+      }, observer.onError.bind(observer), function () {
+        if (!hasValue) {
+          observer.onError(new Error(sequenceContainsNoElements));
+        } else {
+          observer.onNext(value);
+          observer.onCompleted();
+        }
+      });
+    });
+  };
+
     function extremaBy(source, keySelector, comparer) {
         return new AnonymousObservable(function (observer) {
             var hasValue = false, lastKey = null, list = [];
@@ -245,7 +263,7 @@
      * @returns {Observable} An observable sequence containing a list of zero or more elements that have a minimum key value.
      */  
     observableProto.minBy = function (keySelector, comparer) {
-        comparer || (comparer = subComparer);
+        comparer || (comparer = defaultSubComparer);
         return extremaBy(this, keySelector, function (x, y) {
             return comparer(x, y) * -1;
         });
@@ -275,7 +293,7 @@
      * @returns {Observable} An observable sequence containing a list of zero or more elements that have a maximum key value.
      */
     observableProto.maxBy = function (keySelector, comparer) {
-        comparer || (comparer = subComparer);
+        comparer || (comparer = defaultSubComparer);
         return extremaBy(this, keySelector, comparer);
     };
 
