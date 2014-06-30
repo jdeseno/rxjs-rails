@@ -11,9 +11,6 @@ task(:update, [:version] => :sync_rxjs_repo) do |t,args|
   %x{
     cd tmp/RxJS
     git co -b #{args[:version]}
-    npm install
-    grunt
-    cd ../..
     rm -f vendor/assets/javascipts/*.js
     cp tmp/RxJS/dist/rx*js vendor/assets/javascripts/
     m4 -D version=#{args[:version].gsub(/^v/i, '')} version.rb.m4 > lib/rxjs/rails/version.rb
