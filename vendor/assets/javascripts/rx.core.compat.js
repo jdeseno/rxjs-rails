@@ -41,7 +41,7 @@
     defaultSubComparer = Rx.helpers.defaultSubComparer = function (x, y) { return x > y ? 1 : (x < y ? -1 : 0); },
     defaultKeySerializer = Rx.helpers.defaultKeySerializer = function (x) { return x.toString(); },
     defaultError = Rx.helpers.defaultError = function (err) { throw err; },
-    isPromise = Rx.helpers.isPromise = function (p) { return !!p && typeof p.then === 'function' && p.then !== Rx.Observable.prototype.then; },
+    isPromise = Rx.helpers.isPromise = function (p) { return !!p && typeof p.then === 'function'; },
     asArray = Rx.helpers.asArray = function () { return Array.prototype.slice.call(arguments); },
     not = Rx.helpers.not = function (a) { return !a; };
 
@@ -1231,67 +1231,64 @@
     return new Scheduler(defaultNow, scheduleNow, scheduleRelative, scheduleAbsolute);
   }());
 
-    /** 
-     * Gets a scheduler that schedules work as soon as possible on the current thread.
-     */
-    var currentThreadScheduler = Scheduler.currentThread = (function () {
-        var queue;
+  /** 
+   * Gets a scheduler that schedules work as soon as possible on the current thread.
+   */
+  var currentThreadScheduler = Scheduler.currentThread = (function () {
+    var queue;
 
-        function runTrampoline (q) {
-            var item;
-            while (q.length > 0) {
-                item = q.dequeue();
-                if (!item.isCancelled()) {
-                    // Note, do not schedule blocking work!
-                    while (item.dueTime - Scheduler.now() > 0) {
-                    }
-                    if (!item.isCancelled()) {
-                        item.invoke();
-                    }
-                }
-            }            
+    function runTrampoline (q) {
+      var item;
+      while (q.length > 0) {
+        item = q.dequeue();
+        if (!item.isCancelled()) {
+          // Note, do not schedule blocking work!
+          while (item.dueTime - Scheduler.now() > 0) {
+          }
+          if (!item.isCancelled()) {
+            item.invoke();
+          }
         }
+      }
+    }
 
-        function scheduleNow(state, action) {
-            return this.scheduleWithRelativeAndState(state, 0, action);
+    function scheduleNow(state, action) {
+      return this.scheduleWithRelativeAndState(state, 0, action);
+    }
+
+    function scheduleRelative(state, dueTime, action) {
+      var dt = this.now() + Scheduler.normalize(dueTime),
+          si = new ScheduledItem(this, state, action, dt);
+
+      if (!queue) {
+        queue = new PriorityQueue(4);
+        queue.enqueue(si);
+        try {
+          runTrampoline(queue);
+        } catch (e) { 
+          throw e;
+        } finally {
+          queue = null;
         }
+      } else {
+        queue.enqueue(si);
+      }
+      return si.disposable;
+    }
 
-        function scheduleRelative(state, dueTime, action) {
-            var dt = this.now() + Scheduler.normalize(dueTime),
-                    si = new ScheduledItem(this, state, action, dt),
-                    t;
-            if (!queue) {
-                queue = new PriorityQueue(4);
-                queue.enqueue(si);
-                try {
-                    runTrampoline(queue);
-                } catch (e) { 
-                    throw e;
-                } finally {
-                    queue = null;
-                }
-            } else {
-                queue.enqueue(si);
-            }
-            return si.disposable;
-        }
+    function scheduleAbsolute(state, dueTime, action) {
+      return this.scheduleWithRelativeAndState(state, dueTime - this.now(), action);
+    }
 
-        function scheduleAbsolute(state, dueTime, action) {
-            return this.scheduleWithRelativeAndState(state, dueTime - this.now(), action);
-        }
+    var currentScheduler = new Scheduler(defaultNow, scheduleNow, scheduleRelative, scheduleAbsolute);
+    
+    currentScheduler.scheduleRequired = function () { return !queue; };
+    currentScheduler.ensureTrampoline = function (action) {
+      if (!queue) { this.schedule(action); } else { action(); }
+    };
 
-        var currentScheduler = new Scheduler(defaultNow, scheduleNow, scheduleRelative, scheduleAbsolute);
-        currentScheduler.scheduleRequired = function () { return queue === null; };
-        currentScheduler.ensureTrampoline = function (action) {
-            if (queue === null) {
-                return this.schedule(action);
-            } else {
-                return action();
-            }
-        };
-
-        return currentScheduler;
-    }());
+    return currentScheduler;
+  }());
 
   
   var scheduleMethod, clearMethod = noop;
@@ -2155,13 +2152,11 @@
 
     // Fix subscriber to check for undefined or function returned to decorate as Disposable
     function fixSubscriber(subscriber) {
-      if (typeof subscriber === 'undefined') {
-        subscriber = disposableEmpty;
-      } else if (typeof subscriber === 'function') {
-        subscriber = disposableCreate(subscriber);
-      }
+      if (subscriber && typeof subscriber.dispose === 'function') { return subscriber; }
 
-      return subscriber;
+      return typeof subscriber === 'function' ?
+        disposableCreate(subscriber) :
+        disposableEmpty;
     }
 
     function AnonymousObservable(subscribe) {
@@ -2257,31 +2252,6 @@
 
         return AutoDetachObserver;
     }(AbstractObserver));
-
-    /** @private */
-    var GroupedObservable = (function (_super) {
-        inherits(GroupedObservable, _super);
-
-        function subscribe(observer) {
-            return this.underlyingObservable.subscribe(observer);
-        }
-
-        /** 
-         * @constructor
-         * @private
-         */
-        function GroupedObservable(key, underlyingObservable, mergedDisposable) {
-            _super.call(this, subscribe);
-            this.key = key;
-            this.underlyingObservable = !mergedDisposable ?
-                underlyingObservable :
-                new AnonymousObservable(function (observer) {
-                    return new CompositeDisposable(mergedDisposable.getDisposable(), underlyingObservable.subscribe(observer));
-                });
-        }
-
-        return GroupedObservable;
-    }(Observable));
 
     /** @private */
     var InnerSubscription = function (subject, observer) {
@@ -2534,50 +2504,29 @@
         return AsyncSubject;
     }(Observable));
 
-    /** @private */
-    var AnonymousSubject = (function (_super) {
-        inherits(AnonymousSubject, _super);
+  var AnonymousSubject = Rx.AnonymousSubject = (function (__super__) {
+    inherits(AnonymousSubject, __super__);
 
-        function subscribe(observer) {
-            return this.observable.subscribe(observer);
-        }
+    function AnonymousSubject(observer, observable) {
+      this.observer = observer;
+      this.observable = observable;      
+      __super__.call(this, this.observable.subscribe.bind(this.observable));
+    }
 
-        /**
-         * @private
-         * @constructor
-         */
-        function AnonymousSubject(observer, observable) {
-            _super.call(this, subscribe);
-            this.observer = observer;
-            this.observable = observable;
-        }
+    addProperties(AnonymousSubject.prototype, Observer, {
+      onCompleted: function () {
+        this.observer.onCompleted();
+      },            
+      onError: function (exception) {
+        this.observer.onError(exception);
+      },            
+      onNext: function (value) {
+        this.observer.onNext(value);
+      }
+    });
 
-        addProperties(AnonymousSubject.prototype, Observer, {
-            /**
-             * @private
-             * @memberOf AnonymousSubject#
-            */
-            onCompleted: function () {
-                this.observer.onCompleted();
-            },
-            /**
-             * @private
-             * @memberOf AnonymousSubject#
-            */            
-            onError: function (exception) {
-                this.observer.onError(exception);
-            },
-            /**
-             * @private
-             * @memberOf AnonymousSubject#
-            */            
-            onNext: function (value) {
-                this.observer.onNext(value);
-            }
-        });
-
-        return AnonymousSubject;
-    }(Observable));
+    return AnonymousSubject;
+  }(Observable));
 
     if (typeof define == 'function' && typeof define.amd == 'object' && define.amd) {
         root.Rx = Rx;

@@ -59,7 +59,7 @@
         subscription = conn.subscribe(observer),
         connection = disposableEmpty;
 
-      var pausable = this.subject.distinctUntilChanged().subscribe(function (b) {
+      var pausable = this.pauser.distinctUntilChanged().subscribe(function (b) {
         if (b) {
           connection = conn.connect();
         } else {
@@ -71,27 +71,25 @@
       return new CompositeDisposable(subscription, connection, pausable);
     }
 
-    function PausableObservable(source, subject) {
+    function PausableObservable(source, pauser) {
       this.source = source;
-      this.subject = subject || new Subject();
-      this.isPaused = true;
+      this.controller = new Subject();
+
+      if (pauser && pauser.subscribe) {
+        this.pauser = this.controller.merge(pauser);
+      } else {
+        this.pauser = this.controller;
+      }
+
       _super.call(this, subscribe);
     }
 
     PausableObservable.prototype.pause = function () {
-      if (this.isPaused === true){
-        return;
-      }
-      this.isPaused = true;
-      this.subject.onNext(false);
+      this.controller.onNext(false);
     };
 
     PausableObservable.prototype.resume = function () {
-      if (this.isPaused === false){
-        return;
-      }
-      this.isPaused = false;
-      this.subject.onNext(true);
+      this.controller.onNext(true);
     };
 
     return PausableObservable;
@@ -158,30 +156,33 @@
     inherits(PausableBufferedObservable, _super);
 
     function subscribe(observer) {
-      var q = [], previous = true;
+      var q = [], previousShouldFire;
       
       var subscription =  
         combineLatestSource(
           this.source,
-          this.subject.distinctUntilChanged(), 
+          this.pauser.distinctUntilChanged().startWith(false),
           function (data, shouldFire) {
             return { data: data, shouldFire: shouldFire };      
           })
           .subscribe(
             function (results) {
-              if (results.shouldFire && previous) {
-                observer.onNext(results.data);
-              }
-              if (results.shouldFire && !previous) {
-                while (q.length > 0) {
-                  observer.onNext(q.shift());
+              if (previousShouldFire !== undefined && results.shouldFire != previousShouldFire) {
+                // change in shouldFire
+                if (results.shouldFire) {
+                  while (q.length > 0) {
+                    observer.onNext(q.shift());
+                  }
                 }
-                previous = true;
-              } else if (!results.shouldFire && !previous) {
-                q.push(results.data);
-              } else if (!results.shouldFire && previous) {
-                previous = false;
+              } else {
+                // new data
+                if (results.shouldFire) {
+                  observer.onNext(results.data);
+                } else {
+                  q.push(results.data);
+                }
               }
+              previousShouldFire = results.shouldFire;
 
             }, 
             function (err) {
@@ -199,33 +200,28 @@
               observer.onCompleted();              
             }
           );
-
-      this.subject.onNext(false);
-
       return subscription;      
     }
 
-    function PausableBufferedObservable(source, subject) {
+    function PausableBufferedObservable(source, pauser) {
       this.source = source;
-      this.subject = subject || new Subject();
-      this.isPaused = true;
+      this.controller = new Subject();
+
+      if (pauser && pauser.subscribe) {
+        this.pauser = this.controller.merge(pauser);
+      } else {
+        this.pauser = this.controller;
+      }
+
       _super.call(this, subscribe);
     }
 
     PausableBufferedObservable.prototype.pause = function () {
-      if (this.isPaused === true){
-        return;
-      }
-      this.isPaused = true;
-      this.subject.onNext(false);
+      this.controller.onNext(false);
     };
 
     PausableBufferedObservable.prototype.resume = function () {
-      if (this.isPaused === false){
-        return;
-      }
-      this.isPaused = false;
-      this.subject.onNext(true);
+      this.controller.onNext(true);
     };
 
     return PausableBufferedObservable; 

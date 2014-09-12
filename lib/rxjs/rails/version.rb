@@ -1,6 +1,6 @@
 module Rxjs
   module Rails
-    VERSION = "2.3.0"
+    VERSION = "v2.3.9"
   end
 end
 
