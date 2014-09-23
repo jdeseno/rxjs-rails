@@ -136,73 +136,68 @@
         return CheckedObserver;
     }(Observer));
 
-    /** @private */
-    var ObserveOnObserver = (function (_super) {
-        inherits(ObserveOnObserver, _super);
+  var ObserveOnObserver = (function (__super__) {
+    inherits(ObserveOnObserver, __super__);
 
-        /** @private */ 
-        function ObserveOnObserver() {
-            _super.apply(this, arguments);
-        }
+    function ObserveOnObserver() {
+      __super__.apply(this, arguments);
+    }
 
-        /** @private */ 
-        ObserveOnObserver.prototype.next = function (value) {
-            _super.prototype.next.call(this, value);
-            this.ensureActive();
-        };
-
-        /** @private */ 
-        ObserveOnObserver.prototype.error = function (e) {
-            _super.prototype.error.call(this, e);
-            this.ensureActive();
-        };
-
-        /** @private */ 
-        ObserveOnObserver.prototype.completed = function () {
-            _super.prototype.completed.call(this);
-            this.ensureActive();
-        };
-
-        return ObserveOnObserver;
-    })(ScheduledObserver);
-
-     /**
-     *  Wraps the source sequence in order to run its observer callbacks on the specified scheduler.
-     * 
-     *  This only invokes observer callbacks on a scheduler. In case the subscription and/or unsubscription actions have side-effects
-     *  that require to be run on a scheduler, use subscribeOn.
-     *          
-     *  @param {Scheduler} scheduler Scheduler to notify observers on.
-     *  @returns {Observable} The source sequence whose observations happen on the specified scheduler.     
-     */
-    observableProto.observeOn = function (scheduler) {
-        var source = this;
-        return new AnonymousObservable(function (observer) {
-            return source.subscribe(new ObserveOnObserver(scheduler, observer));
-        });
+    ObserveOnObserver.prototype.next = function (value) {
+      __super__.prototype.next.call(this, value);
+      this.ensureActive();
     };
 
-     /**
-     *  Wraps the source sequence in order to run its subscription and unsubscription logic on the specified scheduler. This operation is not commonly used;
-     *  see the remarks section for more information on the distinction between subscribeOn and observeOn.
-
-     *  This only performs the side-effects of subscription and unsubscription on the specified scheduler. In order to invoke observer
-     *  callbacks on a scheduler, use observeOn.
-
-     *  @param {Scheduler} scheduler Scheduler to perform subscription and unsubscription actions on.
-     *  @returns {Observable} The source sequence whose subscriptions and unsubscriptions happen on the specified scheduler.
-     */
-    observableProto.subscribeOn = function (scheduler) {
-        var source = this;
-        return new AnonymousObservable(function (observer) {
-            var m = new SingleAssignmentDisposable(), d = new SerialDisposable();
-            d.setDisposable(m);
-            m.setDisposable(scheduler.schedule(function () {
-                d.setDisposable(new ScheduledDisposable(scheduler, source.subscribe(observer)));
-            }));
-            return d;
-        });
+    ObserveOnObserver.prototype.error = function (e) {
+      __super__.prototype.error.call(this, e);
+      this.ensureActive();
     };
+
+    ObserveOnObserver.prototype.completed = function () {
+      __super__.prototype.completed.call(this);
+      this.ensureActive();
+    };
+
+    return ObserveOnObserver;
+  })(ScheduledObserver);
+
+   /**
+   *  Wraps the source sequence in order to run its observer callbacks on the specified scheduler.
+   * 
+   *  This only invokes observer callbacks on a scheduler. In case the subscription and/or unsubscription actions have side-effects
+   *  that require to be run on a scheduler, use subscribeOn.
+   *          
+   *  @param {Scheduler} scheduler Scheduler to notify observers on.
+   *  @returns {Observable} The source sequence whose observations happen on the specified scheduler.     
+   */
+  observableProto.observeOn = function (scheduler) {
+    var source = this;
+    return new AnonymousObservable(function (observer) {
+      return source.subscribe(new ObserveOnObserver(scheduler, observer));
+    });
+  };
+
+   /**
+   *  Wraps the source sequence in order to run its subscription and unsubscription logic on the specified scheduler. This operation is not commonly used;
+   *  see the remarks section for more information on the distinction between subscribeOn and observeOn.
+
+   *  This only performs the side-effects of subscription and unsubscription on the specified scheduler. In order to invoke observer
+   *  callbacks on a scheduler, use observeOn.
+
+   *  @param {Scheduler} scheduler Scheduler to perform subscription and unsubscription actions on.
+   *  @returns {Observable} The source sequence whose subscriptions and unsubscriptions happen on the specified scheduler.
+   */
+  observableProto.subscribeOn = function (scheduler) {
+    var source = this;
+    return new AnonymousObservable(function (observer) {
+      var m = new SingleAssignmentDisposable(), d = new SerialDisposable();
+      d.setDisposable(m);
+      m.setDisposable(scheduler.schedule(function () {
+        d.setDisposable(new ScheduledDisposable(scheduler, source.subscribe(observer)));
+      }));
+      return d;
+    });
+  };
 
   /**
    *  Generates an observable sequence by running a state-driven loop producing the sequence's elements, using the specified scheduler to send out observer messages.
@@ -248,10 +243,7 @@
   };
 
   /**
-   *  Constructs an observable sequence that depends on a resource object, whose lifetime is tied to the resulting observable sequence's lifetime.
-   *  
-   * @example
-   *  var res = Rx.Observable.using(function () { return new AsyncSubject(); }, function (s) { return s; });
+   * Constructs an observable sequence that depends on a resource object, whose lifetime is tied to the resulting observable sequence's lifetime.
    * @param {Function} resourceFactory Factory function to obtain a resource object.
    * @param {Function} observableFactory Factory function to obtain an observable sequence that depends on the obtained resource.
    * @returns {Observable} An observable sequence whose lifetime controls the lifetime of the dependent resource object.
@@ -261,9 +253,7 @@
       var disposable = disposableEmpty, resource, source;
       try {
         resource = resourceFactory();
-        if (resource) {
-          disposable = resource;
-        }
+        resource && (disposable = resource);
         source = observableFactory(resource);
       } catch (exception) {
         return new CompositeDisposable(observableThrow(exception).subscribe(observer), disposable);
@@ -364,9 +354,7 @@
    * @returns {Observable} An observable sequence that concatenates the first and second sequence, even if the first sequence terminates exceptionally.
    */
   observableProto.onErrorResumeNext = function (second) {
-    if (!second) {
-      throw new Error('Second observable is required');
-    }
+    if (!second) { throw new Error('Second observable is required'); }
     return onErrorResumeNext([this, second]);
   };
 
@@ -389,11 +377,7 @@
           isPromise(current) && (current = observableFromPromise(current));
           d = new SingleAssignmentDisposable();
           subscription.setDisposable(d);
-          d.setDisposable(current.subscribe(observer.onNext.bind(observer), function () {
-              self();
-          }, function () {
-              self();
-          }));
+          d.setDisposable(current.subscribe(observer.onNext.bind(observer), self, self));
         } else {
           observer.onCompleted();
         }

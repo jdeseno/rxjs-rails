@@ -44,6 +44,7 @@
     defaultComparer = helpers.defaultComparer,
     identity = helpers.identity,
     defaultSubComparer = helpers.defaultSubComparer,
+    isFunction = helpers.isFunction,
     isPromise = helpers.isPromise,
     observableFromPromise = Observable.fromPromise;
 
@@ -69,42 +70,40 @@
     });
   };
 
-    function extremaBy(source, keySelector, comparer) {
-        return new AnonymousObservable(function (observer) {
-            var hasValue = false, lastKey = null, list = [];
-            return source.subscribe(function (x) {
-                var comparison, key;
-                try {
-                    key = keySelector(x);
-                } catch (ex) {
-                    observer.onError(ex);
-                    return;
-                }
-                comparison = 0;
-                if (!hasValue) {
-                    hasValue = true;
-                    lastKey = key;
-                } else {
-                    try {
-                        comparison = comparer(key, lastKey);
-                    } catch (ex1) {
-                        observer.onError(ex1);
-                        return;
-                    }
-                }
-                if (comparison > 0) {
-                    lastKey = key;
-                    list = [];
-                }
-                if (comparison >= 0) {
-                    list.push(x);
-                }
-            }, observer.onError.bind(observer), function () {
-                observer.onNext(list);
-                observer.onCompleted();
-            });
-        });
-    }
+  function extremaBy(source, keySelector, comparer) {
+    return new AnonymousObservable(function (observer) {
+      var hasValue = false, lastKey = null, list = [];
+      return source.subscribe(function (x) {
+        var comparison, key;
+        try {
+          key = keySelector(x);
+        } catch (ex) {
+          observer.onError(ex);
+          return;
+        }
+        comparison = 0;
+        if (!hasValue) {
+          hasValue = true;
+          lastKey = key;
+        } else {
+          try {
+            comparison = comparer(key, lastKey);
+          } catch (ex1) {
+            observer.onError(ex1);
+            return;
+          }
+        }
+        if (comparison > 0) {
+          lastKey = key;
+          list = [];
+        }
+        if (comparison >= 0) { list.push(x); }
+      }, observer.onError.bind(observer), function () {
+        observer.onNext(list);
+        observer.onCompleted();
+      });
+    });
+  }
 
     function firstOnly(x) {
         if (x.length === 0) {
@@ -235,22 +234,22 @@
             });
     };
 
-    /**
-     * Computes the sum of a sequence of values that are obtained by invoking an optional transform function on each element of the input sequence, else if not specified computes the sum on each item in the sequence.
-     * @example
-     * var res = source.sum();
-     * var res = source.sum(function (x) { return x.value; });
-     * @param {Function} [selector] A transform function to apply to each element.
-     * @param {Any} [thisArg] Object to use as this when executing callback.        
-     * @returns {Observable} An observable sequence containing a single element with the sum of the values in the source sequence.
-     */    
-    observableProto.sum = function (keySelector, thisArg) {
-        return keySelector ? 
-            this.select(keySelector, thisArg).sum() :
-            this.aggregate(0, function (prev, curr) {
-                return prev + curr;
-            });
-    };
+  /**
+   * Computes the sum of a sequence of values that are obtained by invoking an optional transform function on each element of the input sequence, else if not specified computes the sum on each item in the sequence.
+   * @example
+   * var res = source.sum();
+   * var res = source.sum(function (x) { return x.value; });
+   * @param {Function} [selector] A transform function to apply to each element.
+   * @param {Any} [thisArg] Object to use as this when executing callback.        
+   * @returns {Observable} An observable sequence containing a single element with the sum of the values in the source sequence.
+   */    
+  observableProto.sum = function (keySelector, thisArg) {
+    return keySelector && isFunction(keySelector) ? 
+      this.map(keySelector, thisArg).sum() :
+      this.aggregate(0, function (prev, curr) {
+        return prev + curr;
+      });
+  };
 
     /**
      * Returns the elements in an observable sequence with the minimum key value according to the specified comparer.
@@ -339,27 +338,25 @@
     };
 
   function sequenceEqualArray(first, second, comparer) {
-      return new AnonymousObservable(function (observer) {
-        var count = 0, len = second.length;
-        return first.subscribe(function (value) {
-          var equal = false;
-          try {
-            if (count < len) {
-              equal = comparer(value, second[count++]);
-            }
-          } catch (e) {
-            observer.onError(e);
-            return;
-          }
-          if (!equal) {
-            observer.onNext(false);
-            observer.onCompleted();
-          }
-        }, observer.onError.bind(observer), function () {
-          observer.onNext(count === len);
+    return new AnonymousObservable(function (observer) {
+      var count = 0, len = second.length;
+      return first.subscribe(function (value) {
+        var equal = false;
+        try {
+          count < len && (equal = comparer(value, second[count++]));
+        } catch (e) {
+          observer.onError(e);
+          return;
+        }
+        if (!equal) {
+          observer.onNext(false);
           observer.onCompleted();
-        });
+        }
+      }, observer.onError.bind(observer), function () {
+        observer.onNext(count === len);
+        observer.onCompleted();
       });
+    });
   }
 
   /**
@@ -385,17 +382,17 @@
       var subscription1 = first.subscribe(function (x) {
         var equal, v;
         if (qr.length > 0) {
-            v = qr.shift();
-            try {
-              equal = comparer(v, x);
-            } catch (e) {
-              observer.onError(e);
-              return;
-            }
-            if (!equal) {
-              observer.onNext(false);
-              observer.onCompleted();
-            }
+          v = qr.shift();
+          try {
+            equal = comparer(v, x);
+          } catch (e) {
+            observer.onError(e);
+            return;
+          }
+          if (!equal) {
+            observer.onNext(false);
+            observer.onCompleted();
+          }
         } else if (doner) {
           observer.onNext(false);
           observer.onCompleted();
@@ -417,9 +414,9 @@
 
       isPromise(second) && (second = observableFromPromise(second));
       var subscription2 = second.subscribe(function (x) {
-        var equal, v;
+        var equal;
         if (ql.length > 0) {
-          v = ql.shift();
+          var v = ql.shift();
           try {
             equal = comparer(v, x);
           } catch (exception) {
@@ -499,60 +496,60 @@
         return elementAtOrDefault(this, index, true, defaultValue);
     };
 
-    function singleOrDefaultAsync(source, hasDefault, defaultValue) {
-        return new AnonymousObservable(function (observer) {
-            var value = defaultValue, seenValue = false;
-            return source.subscribe(function (x) {
-                if (seenValue) {
-                    observer.onError(new Error('Sequence contains more than one element'));
-                } else {
-                    value = x;
-                    seenValue = true;
-                }
-            }, observer.onError.bind(observer), function () {
-                if (!seenValue && !hasDefault) {
-                    observer.onError(new Error(sequenceContainsNoElements));
-                } else {
-                    observer.onNext(value);
-                    observer.onCompleted();
-                }
-            });
-        });
-    }
+  function singleOrDefaultAsync(source, hasDefault, defaultValue) {
+    return new AnonymousObservable(function (observer) {
+      var value = defaultValue, seenValue = false;
+      return source.subscribe(function (x) {
+        if (seenValue) {
+          observer.onError(new Error('Sequence contains more than one element'));
+        } else {
+          value = x;
+          seenValue = true;
+        }
+      }, observer.onError.bind(observer), function () {
+        if (!seenValue && !hasDefault) {
+          observer.onError(new Error(sequenceContainsNoElements));
+        } else {
+          observer.onNext(value);
+          observer.onCompleted();
+        }
+      });
+    });
+  }
 
-    /**
-     * Returns the only element of an observable sequence that satisfies the condition in the optional predicate, and reports an exception if there is not exactly one element in the observable sequence.
-     * @example
-     * var res = res = source.single();
-     * var res = res = source.single(function (x) { return x === 42; });
-     * @param {Function} [predicate] A predicate function to evaluate for elements in the source sequence.
-     * @param {Any} [thisArg] Object to use as `this` when executing the predicate.        
-     * @returns {Observable} Sequence containing the single element in the observable sequence that satisfies the condition in the predicate.
-     */
-    observableProto.single = function (predicate, thisArg) {
-        return predicate ?
-            this.where(predicate, thisArg).single() :
-            singleOrDefaultAsync(this, false);
-    };
+  /**
+   * Returns the only element of an observable sequence that satisfies the condition in the optional predicate, and reports an exception if there is not exactly one element in the observable sequence.
+   * @example
+   * var res = res = source.single();
+   * var res = res = source.single(function (x) { return x === 42; });
+   * @param {Function} [predicate] A predicate function to evaluate for elements in the source sequence.
+   * @param {Any} [thisArg] Object to use as `this` when executing the predicate.        
+   * @returns {Observable} Sequence containing the single element in the observable sequence that satisfies the condition in the predicate.
+   */
+  observableProto.single = function (predicate, thisArg) {
+    return predicate && isFunction(predicate) ?
+      this.where(predicate, thisArg).single() :
+      singleOrDefaultAsync(this, false);
+  };
 
-    /**
-     * Returns the only element of an observable sequence that matches the predicate, or a default value if no such element exists; this method reports an exception if there is more than one element in the observable sequence.
-     * @example
-     * var res = res = source.singleOrDefault();
-     * var res = res = source.singleOrDefault(function (x) { return x === 42; });
-     * res = source.singleOrDefault(function (x) { return x === 42; }, 0);
-     * res = source.singleOrDefault(null, 0);
-     * @memberOf Observable#
-     * @param {Function} predicate A predicate function to evaluate for elements in the source sequence.
-     * @param [defaultValue] The default value if the index is outside the bounds of the source sequence.
-     * @param {Any} [thisArg] Object to use as `this` when executing the predicate.        
-     * @returns {Observable} Sequence containing the single element in the observable sequence that satisfies the condition in the predicate, or a default value if no such element exists.
-     */
-    observableProto.singleOrDefault = function (predicate, defaultValue, thisArg) {
-        return predicate?
-            this.where(predicate, thisArg).singleOrDefault(null, defaultValue) :
-            singleOrDefaultAsync(this, true, defaultValue)
-    };
+  /**
+   * Returns the only element of an observable sequence that matches the predicate, or a default value if no such element exists; this method reports an exception if there is more than one element in the observable sequence.
+   * @example
+   * var res = res = source.singleOrDefault();
+   * var res = res = source.singleOrDefault(function (x) { return x === 42; });
+   * res = source.singleOrDefault(function (x) { return x === 42; }, 0);
+   * res = source.singleOrDefault(null, 0);
+   * @memberOf Observable#
+   * @param {Function} predicate A predicate function to evaluate for elements in the source sequence.
+   * @param [defaultValue] The default value if the index is outside the bounds of the source sequence.
+   * @param {Any} [thisArg] Object to use as `this` when executing the predicate.        
+   * @returns {Observable} Sequence containing the single element in the observable sequence that satisfies the condition in the predicate, or a default value if no such element exists.
+   */
+  observableProto.singleOrDefault = function (predicate, defaultValue, thisArg) {
+    return predicate && isFunction(predicate) ?
+      this.where(predicate, thisArg).singleOrDefault(null, defaultValue) :
+      singleOrDefaultAsync(this, true, defaultValue);
+  };
     function firstOrDefaultAsync(source, hasDefault, defaultValue) {
         return new AnonymousObservable(function (observer) {
             return source.subscribe(function (x) {
@@ -697,69 +694,24 @@
         return findValue(this, predicate, thisArg, true);
     };
 
-  function toSet(source, type) {
-    return new AnonymousObservable(function (observer) {
-      var s = new type();
-      return source.subscribe(
-        s.add.bind(s),
-        observer.onError.bind(observer),
-        function () {
-          observer.onNext(s);
-          observer.onCompleted();
-        });
-    });
-  }
   if (!!root.Set) {
     /**
      * Converts the observable sequence to a Set if it exists.
      * @returns {Observable} An observable sequence with a single value of a Set containing the values from the observable sequence.
      */
     observableProto.toSet = function () {
-      return toSet(this, root.Set);
+      var source = this;
+      return new AnonymousObservable(function (observer) {
+        var s = new root.Set();
+        return source.subscribe(
+          s.add.bind(s),
+          observer.onError.bind(observer),
+          function () {
+            observer.onNext(s);
+            observer.onCompleted();
+          });
+      });
     };
-  }
-
-  if (!!root.WeakSet) {
-    /**
-     * Converts the observable sequence to a WeakSet if it exists.
-     * @returns {Observable} An observable sequence with a single value of a WeakSet containing the values from the observable sequence.
-     */
-    observableProto.toWeakSet = function () {
-      return toSet(this, root.WeakSet);
-    };
-  }
-
-  function toMap(source, type, keySelector, elementSelector) {
-    return new AnonymousObservable(function (observer) {
-      var m = new type();
-      return source.subscribe(
-        function (x) {
-          var key;
-          try {
-            key = keySelector(x);
-          } catch (e) {
-            observer.onError(e);
-            return;
-          }
-
-          var element = x;
-          if (elementSelector) {
-            try {
-              element = elementSelector(x);
-            } catch (e) {
-              observer.onError(e);
-              return;
-            }              
-          }
-
-          m.set(key, element);
-        },
-        observer.onError.bind(observer),
-        function () {
-          observer.onNext(m);
-          observer.onCompleted();
-        });
-    });
   }
 
   if (!!root.Map) {
@@ -770,19 +722,37 @@
     * @returns {Observable} An observable sequence with a single value of a Map containing the values from the observable sequence.
     */
     observableProto.toMap = function (keySelector, elementSelector) {
-      return toMap(this, root.Map, keySelector, elementSelector);
-    };
-  }
+      var source = this;
+      return new AnonymousObservable(function (observer) {
+        var m = new root.Map();
+        return source.subscribe(
+          function (x) {
+            var key;
+            try {
+              key = keySelector(x);
+            } catch (e) {
+              observer.onError(e);
+              return;
+            }
 
-  if (!!root.WeakMap) {
-    /**
-    * Converts the observable sequence to a WeakMap if it exists.
-    * @param {Function} keySelector A function which produces the key for the WeakMap
-    * @param {Function} [elementSelector] An optional function which produces the element for the WeakMap. If not present, defaults to the value from the observable sequence.
-    * @returns {Observable} An observable sequence with a single value of a WeakMap containing the values from the observable sequence.
-    */
-    observableProto.toWeakMap = function (keySelector, elementSelector) {
-      return toMap(this, root.WeakMap, keySelector, elementSelector);
+            var element = x;
+            if (elementSelector) {
+              try {
+                element = elementSelector(x);
+              } catch (e) {
+                observer.onError(e);
+                return;
+              }              
+            }
+
+            m.set(key, element);
+          },
+          observer.onError.bind(observer),
+          function () {
+            observer.onNext(m);
+            observer.onCompleted();
+          });
+      });
     };
   }
 
