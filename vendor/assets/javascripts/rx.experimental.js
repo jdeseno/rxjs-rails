@@ -15,16 +15,15 @@
         freeModule = objectTypes[typeof module] && module && !module.nodeType && module,
         moduleExports = freeModule && freeModule.exports === freeExports && freeExports,
         freeGlobal = objectTypes[typeof global] && global;
-    
+
     if (freeGlobal && (freeGlobal.global === freeGlobal || freeGlobal.window === freeGlobal)) {
         root = freeGlobal;
     }
 
     // Because of build optimizers
     if (typeof define === 'function' && define.amd) {
-        define(['rx', 'exports'], function (Rx, exports) {
-            root.Rx = factory(root, exports, Rx);
-            return root.Rx;
+        define(['rx'], function (Rx, exports) {
+            return factory(root, exports, Rx);
         });
     } else if (typeof module === 'object' && module && module.exports === freeExports) {
         module.exports = factory(root, module.exports, require('./rx'));
@@ -32,7 +31,7 @@
         root.Rx = factory(root, {}, root.Rx);
     }
 }.call(this, function (root, exp, Rx, undefined) {
-    
+
   // Aliases
   var Observable = Rx.Observable,
     observableProto = Observable.prototype,
@@ -46,7 +45,7 @@
     SingleAssignmentDisposable = Rx.SingleAssignmentDisposable,
     Enumerator = Rx.internals.Enumerator,
     Enumerable = Rx.internals.Enumerable,
-    enumerableFor = Enumerable.forEach,
+    enumerableOf = Enumerable.of,
     immediateScheduler = Rx.Scheduler.immediate,
     currentThreadScheduler = Rx.Scheduler.currentThread,
     slice = Array.prototype.slice,
@@ -74,15 +73,17 @@
   if (root.Set && typeof new root.Set()['@@iterator'] === 'function') {
     $iterator$ = '@@iterator';
   }
-  
-  var doneEnumerator = { done: true, value: undefined };
+
+  var doneEnumerator = Rx.doneEnumerator = { done: true, value: undefined };
+
+  Rx.iterator = $iterator$;
 
   function enumerableWhile(condition, source) {
     return new Enumerable(function () {
       return new Enumerator(function () {
         return condition() ?
           { done: false, value: source } :
-          { done: true, value: undefined };  
+          { done: true, value: undefined };
       });
     });
   }
@@ -100,14 +101,14 @@
 
    /**
    *  Determines whether an observable collection contains values. There is an alias for this method called 'ifThen' for browsers <IE9
-   *  
+   *
    * @example
    *  1 - res = Rx.Observable.if(condition, obs1);
    *  2 - res = Rx.Observable.if(condition, obs1, obs2);
    *  3 - res = Rx.Observable.if(condition, obs1, scheduler);
    * @param {Function} condition The condition which determines if the thenSource or elseSource will be run.
    * @param {Observable} thenSource The observable sequence or Promise that will be run if the condition function returns true.
-   * @param {Observable} [elseSource] The observable sequence or Promise that will be run if the condition function returns false. If this is not provided, it defaults to Rx.Observabe.Empty with the specified scheduler.  
+   * @param {Observable} [elseSource] The observable sequence or Promise that will be run if the condition function returns false. If this is not provided, it defaults to Rx.Observabe.Empty with the specified scheduler.
    * @returns {Observable} An observable sequence which is either the thenSource or elseSource.
    */
   Observable['if'] = Observable.ifThen = function (condition, thenSource, elseSourceOrScheduler) {
@@ -128,10 +129,10 @@
    * There is an alias for this method called 'forIn' for browsers <IE9
    * @param {Array} sources An array of values to turn into an observable sequence.
    * @param {Function} resultSelector A function to apply to each item in the sources array to turn it into an observable sequence.
-   * @returns {Observable} An observable sequence from the concatenated observable sequences.  
-   */ 
-  Observable['for'] = Observable.forIn = function (sources, resultSelector) {
-    return enumerableFor(sources, resultSelector).concat();
+   * @returns {Observable} An observable sequence from the concatenated observable sequences.
+   */
+  Observable['for'] = Observable.forIn = function (sources, resultSelector, thisArg) {
+    return enumerableOf(sources, resultSelector, thisArg).concat();
   };
 
    /**
@@ -140,7 +141,7 @@
    *
    * @param {Function} condition The condition which determines if the source will be repeated.
    * @param {Observable} source The observable sequence that will be run if the condition function returns true.
-   * @returns {Observable} An observable sequence which is repeated as long as the condition holds.  
+   * @returns {Observable} An observable sequence which is repeated as long as the condition holds.
    */
   var observableWhileDo = Observable['while'] = Observable.whileDo = function (condition, source) {
     isPromise(source) && (source = observableFromPromise(source));
@@ -152,8 +153,8 @@
      *
      * @param {Function} condition The condition which determines if the source will be repeated.
      * @param {Observable} source The observable sequence that will be run if the condition function returns true.
-     * @returns {Observable} An observable sequence which is repeated as long as the condition holds. 
-     */ 
+     * @returns {Observable} An observable sequence which is repeated as long as the condition holds.
+     */
     observableProto.doWhile = function (condition) {
         return observableConcat([this, observableWhileDo(condition, this)]);
     };
@@ -161,17 +162,17 @@
    /**
    *  Uses selector to determine which source in sources to use.
    *  There is an alias 'switchCase' for browsers <IE9.
-   *  
+   *
    * @example
    *  1 - res = Rx.Observable.case(selector, { '1': obs1, '2': obs2 });
    *  1 - res = Rx.Observable.case(selector, { '1': obs1, '2': obs2 }, obs0);
    *  1 - res = Rx.Observable.case(selector, { '1': obs1, '2': obs2 }, scheduler);
-   * 
+   *
    * @param {Function} selector The function which extracts the value for to test in a case statement.
    * @param {Array} sources A object which has keys which correspond to the case statement labels.
    * @param {Observable} [elseSource] The observable sequence or Promise that will be run if the sources are not matched. If this is not provided, it defaults to Rx.Observabe.empty with the specified scheduler.
-   *       
-   * @returns {Observable} An observable sequence which is determined by a case statement.  
+   *
+   * @returns {Observable} An observable sequence which is determined by a case statement.
    */
   Observable['case'] = Observable.switchCase = function (selector, sources, defaultSourceOrScheduler) {
     return observableDefer(function () {
@@ -179,17 +180,17 @@
       defaultSourceOrScheduler || (defaultSourceOrScheduler = observableEmpty());
 
       typeof defaultSourceOrScheduler.now === 'function' && (defaultSourceOrScheduler = observableEmpty(defaultSourceOrScheduler));
-      
+
       var result = sources[selector()];
       isPromise(result) && (result = observableFromPromise(result));
-      
+
       return result || defaultSourceOrScheduler;
     });
   };
 
    /**
    *  Expands an observable sequence by recursively invoking selector.
-   *  
+   *
    * @param {Function} selector Selector function to invoke for each produced element, resulting in another sequence to which the selector will be invoked recursively again.
    * @param {Scheduler} [scheduler] Scheduler on which to perform the expansion. If not provided, this defaults to the current thread scheduler.
    * @returns {Observable} An observable sequence containing all the elements produced by the recursive expansion.
@@ -253,10 +254,10 @@
 
    /**
    *  Runs all observable sequences in parallel and collect their last elements.
-   *  
+   *
    * @example
    *  1 - res = Rx.Observable.forkJoin([obs1, obs2]);
-   *  1 - res = Rx.Observable.forkJoin(obs1, obs2, ...);  
+   *  1 - res = Rx.Observable.forkJoin(obs1, obs2, ...);
    * @returns {Observable} An observable sequence with an array collecting the last elements of all the input sequences.
    */
   Observable.forkJoin = function () {
@@ -284,12 +285,12 @@
                 hasResults[i] = true;
                 results[i] = value;
               }
-            }, 
+            },
             function (e) {
               finished = true;
               subscriber.onError(e);
               group.dispose();
-            }, 
+            },
             function () {
               if (!finished) {
                 if (!hasResults[i]) {

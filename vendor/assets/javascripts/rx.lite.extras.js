@@ -15,16 +15,15 @@
         freeModule = objectTypes[typeof module] && module && !module.nodeType && module,
         moduleExports = freeModule && freeModule.exports === freeExports && freeExports,
         freeGlobal = objectTypes[typeof global] && global;
-    
+
     if (freeGlobal && (freeGlobal.global === freeGlobal || freeGlobal.window === freeGlobal)) {
         root = freeGlobal;
     }
 
     // Because of build optimizers
     if (typeof define === 'function' && define.amd) {
-        define(['rx', 'exports'], function (Rx, exports) {
-            root.Rx = factory(root, exports, Rx);
-            return root.Rx;
+        define(['rx'], function (Rx, exports) {
+            return factory(root, exports, Rx);
         });
     } else if (typeof module === 'object' && module && module.exports === freeExports) {
         module.exports = factory(root, module.exports, require('./rx'));
@@ -32,7 +31,7 @@
         root.Rx = factory(root, {}, root.Rx);
     }
 }.call(this, function (root, exp, Rx, undefined) {
-    
+
   // References
   var Observable = Rx.Observable,
     observableProto = Observable.prototype,
@@ -56,7 +55,7 @@
     inherits = internals.inherits,
     noop = helpers.noop,
     isScheduler = helpers.isScheduler,
-    observableFromPromise = Observable.fromPromise,   
+    observableFromPromise = Observable.fromPromise,
     slice = Array.prototype.slice;
 
   function argsOrArray(args, idx) {
@@ -98,8 +97,8 @@
             this.checkAccess();
             try {
                 this._observer.onNext(value);
-            } catch (e) { 
-                throw e;                
+            } catch (e) {
+                throw e;
             } finally {
                 this._state = 0;
             }
@@ -109,8 +108,8 @@
             this.checkAccess();
             try {
                 this._observer.onError(err);
-            } catch (e) { 
-                throw e;                
+            } catch (e) {
+                throw e;
             } finally {
                 this._state = 2;
             }
@@ -120,8 +119,8 @@
             this.checkAccess();
             try {
                 this._observer.onCompleted();
-            } catch (e) { 
-                throw e;                
+            } catch (e) {
+                throw e;
             } finally {
                 this._state = 2;
             }
@@ -163,12 +162,12 @@
 
    /**
    *  Wraps the source sequence in order to run its observer callbacks on the specified scheduler.
-   * 
+   *
    *  This only invokes observer callbacks on a scheduler. In case the subscription and/or unsubscription actions have side-effects
    *  that require to be run on a scheduler, use subscribeOn.
-   *          
+   *
    *  @param {Scheduler} scheduler Scheduler to notify observers on.
-   *  @returns {Observable} The source sequence whose observations happen on the specified scheduler.     
+   *  @returns {Observable} The source sequence whose observations happen on the specified scheduler.
    */
   observableProto.observeOn = function (scheduler) {
     var source = this;
@@ -201,7 +200,7 @@
 
   /**
    *  Generates an observable sequence by running a state-driven loop producing the sequence's elements, using the specified scheduler to send out observer messages.
-   *  
+   *
    * @example
    *  var res = Rx.Observable.generate(0, function (x) { return x < 10; }, function (x) { return x + 1; }, function (x) { return x; });
    *  var res = Rx.Observable.generate(0, function (x) { return x < 10; }, function (x) { return x + 1; }, function (x) { return x; }, Rx.Scheduler.timeout);
@@ -266,7 +265,7 @@
    * Propagates the observable sequence or Promise that reacts first.
    * @param {Observable} rightSource Second observable sequence or Promise.
    * @returns {Observable} {Observable} An observable sequence that surfaces either of the given sequences, whichever reacted first.
-   */  
+   */
   observableProto.amb = function (rightSource) {
     var leftSource = this;
     return new AnonymousObservable(function (observer) {
@@ -335,7 +334,7 @@
    * @example
    * var = Rx.Observable.amb(xs, ys, zs);
    * @returns {Observable} An observable sequence that surfaces any of the given sequences, whichever reacted first.
-   */  
+   */
   Observable.amb = function () {
     var acc = observableNever(),
       items = argsOrArray(arguments, 0);
@@ -360,11 +359,11 @@
 
   /**
    * Continues an observable sequence that is terminated normally or by an exception with the next observable sequence.
-   * 
+   *
    * @example
    * 1 - res = Rx.Observable.onErrorResumeNext(xs, ys, zs);
    * 1 - res = Rx.Observable.onErrorResumeNext([xs, ys, zs]);
-   * @returns {Observable} An observable sequence that concatenates the source sequences, even if a sequence terminates exceptionally.   
+   * @returns {Observable} An observable sequence that concatenates the source sequences, even if a sequence terminates exceptionally.
    */
   var onErrorResumeNext = Observable.onErrorResumeNext = function () {
     var sources = argsOrArray(arguments, 0);
@@ -388,13 +387,13 @@
 
   /**
    *  Projects each element of an observable sequence into zero or more buffers which are produced based on element count information.
-   *  
+   *
    * @example
    *  var res = xs.bufferWithCount(10);
    *  var res = xs.bufferWithCount(10, 1);
    * @param {Number} count Length of each buffer.
    * @param {Number} [skip] Number of elements to skip between creation of consecutive buffers. If not provided, defaults to the count.
-   * @returns {Observable} An observable sequence of buffers.    
+   * @returns {Observable} An observable sequence of buffers.
    */
   observableProto.bufferWithCount = function (count, skip) {
     if (typeof skip !== 'number') {
@@ -407,72 +406,65 @@
     });
   };
 
-    /**
-     *  Projects each element of an observable sequence into zero or more windows which are produced based on element count information.
-     *  
-     *  var res = xs.windowWithCount(10);
-     *  var res = xs.windowWithCount(10, 1);
-     * @param {Number} count Length of each window.
-     * @param {Number} [skip] Number of elements to skip between creation of consecutive windows. If not specified, defaults to the count.
-     * @returns {Observable} An observable sequence of windows.  
-     */
-    observableProto.windowWithCount = function (count, skip) {
-        var source = this;
-        if (count <= 0) {
-            throw new Error(argumentOutOfRange);
+  /**
+   *  Projects each element of an observable sequence into zero or more windows which are produced based on element count information.
+   *
+   *  var res = xs.windowWithCount(10);
+   *  var res = xs.windowWithCount(10, 1);
+   * @param {Number} count Length of each window.
+   * @param {Number} [skip] Number of elements to skip between creation of consecutive windows. If not specified, defaults to the count.
+   * @returns {Observable} An observable sequence of windows.
+   */
+  observableProto.windowWithCount = function (count, skip) {
+    var source = this;
+    +count || (count = 0);
+    Math.abs(count) === Infinity && (count = 0);
+    if (count <= 0) { throw new Error(argumentOutOfRange); }
+    skip == null && (skip = count);
+    +skip || (skip = 0);
+    Math.abs(skip) === Infinity && (skip = 0);
+
+    if (skip <= 0) { throw new Error(argumentOutOfRange); }
+    return new AnonymousObservable(function (observer) {
+      var m = new SingleAssignmentDisposable(),
+        refCountDisposable = new RefCountDisposable(m),
+        n = 0,
+        q = [];
+
+      function createWindow () {
+        var s = new Subject();
+        q.push(s);
+        observer.onNext(addRef(s, refCountDisposable));
+      }
+
+      createWindow();
+
+      m.setDisposable(source.subscribe(
+        function (x) {
+          for (var i = 0, len = q.length; i < len; i++) { q[i].onNext(x); }
+          var c = n - count + 1;
+          c >=0 && c % skip === 0 && q.shift().onCompleted();
+          ++n % skip === 0 && createWindow();
+        }, 
+        function (e) {
+          while (q.length > 0) { q.shift().onError(e); }
+          observer.onError(e);
+        }, 
+        function () {
+          while (q.length > 0) { q.shift().onCompleted(); }
+          observer.onCompleted();
         }
-        if (arguments.length === 1) {
-            skip = count;
-        }
-        if (skip <= 0) {
-            throw new Error(argumentOutOfRange);
-        }
-        return new AnonymousObservable(function (observer) {
-            var m = new SingleAssignmentDisposable(),
-                refCountDisposable = new RefCountDisposable(m),
-                n = 0,
-                q = [],
-                createWindow = function () {
-                    var s = new Subject();
-                    q.push(s);
-                    observer.onNext(addRef(s, refCountDisposable));
-                };
-            createWindow();
-            m.setDisposable(source.subscribe(function (x) {
-                var s;
-                for (var i = 0, len = q.length; i < len; i++) {
-                    q[i].onNext(x);
-                }
-                var c = n - count + 1;
-                if (c >= 0 && c % skip === 0) {
-                    s = q.shift();
-                    s.onCompleted();
-                }
-                n++;
-                if (n % skip === 0) {
-                    createWindow();
-                }
-            }, function (exception) {
-                while (q.length > 0) {
-                    q.shift().onError(exception);
-                }
-                observer.onError(exception);
-            }, function () {
-                while (q.length > 0) {
-                    q.shift().onCompleted();
-                }
-                observer.onCompleted();
-            }));
-            return refCountDisposable;
-        });
-    };
+      ));
+      return refCountDisposable;
+    });
+  };
 
   /**
    *  Returns an array with the specified number of contiguous elements from the end of an observable sequence.
-   *  
+   *
    * @description
    *  This operator accumulates a buffer with a length enough to store count elements. Upon completion of the
-   *  source sequence, this buffer is produced on the result sequence.       
+   *  source sequence, this buffer is produced on the result sequence.
    * @param {Number} count Number of elements to take from the end of the source sequence.
    * @returns {Observable} An observable sequence containing a single array with the specified number of elements from the end of the source sequence.
    */
@@ -492,13 +484,13 @@
 
     /**
      *  Returns the elements of the specified sequence or the specified value in a singleton sequence if the sequence is empty.
-     *  
+     *
      *  var res = obs = xs.defaultIfEmpty();
      *  2 - obs = xs.defaultIfEmpty(false);
-     *      
+     *
      * @memberOf Observable#
      * @param defaultValue The value to return if the sequence is empty. If not provided, this defaults to null.
-     * @returns {Observable} An observable sequence that contains the specified default value if the source is empty; otherwise, the elements of the source itself. 
+     * @returns {Observable} An observable sequence that contains the specified default value if the source is empty; otherwise, the elements of the source itself.
      */
     observableProto.defaultIfEmpty = function (defaultValue) {
         var source = this;
@@ -539,12 +531,12 @@
 
   /**
    *  Returns an observable sequence that contains only distinct elements according to the keySelector and the comparer.
-   *  Usage of this operator should be considered carefully due to the maintenance of an internal lookup structure which can grow large. 
-   * 
+   *  Usage of this operator should be considered carefully due to the maintenance of an internal lookup structure which can grow large.
+   *
    * @example
    *  var res = obs = xs.distinct();
    *  2 - obs = xs.distinct(function (x) { return x.id; });
-   *  2 - obs = xs.distinct(function (x) { return x.id; }, function (a,b) { return a === b; });  
+   *  2 - obs = xs.distinct(function (x) { return x.id; }, function (a,b) { return a === b; });
    * @param {Function} [keySelector]  A function to compute the comparison key for each element.
    * @param {Function} [comparer]  Used to compare items in the collection.
    * @returns {Observable} An observable sequence only containing the distinct elements, based on a computed key value, from the source sequence.
@@ -563,11 +555,11 @@
           } catch (e) {
             observer.onError(e);
             return;
-          }            
+          }
         }
         hashSet.push(key) && observer.onNext(x);
-      }, 
-      observer.onError.bind(observer), 
+      },
+      observer.onError.bind(observer),
       observer.onCompleted.bind(observer));
     });
   };
