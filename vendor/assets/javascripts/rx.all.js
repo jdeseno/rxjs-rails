@@ -307,7 +307,7 @@
       }
     }
     var size = 0;
-    result = true;
+    var result = true;
 
     // add `a` and `b` to the stack of traversed objects
     stackA.push(a);
@@ -709,30 +709,30 @@
         });
     };
 
-    var ScheduledItem = Rx.internals.ScheduledItem = function (scheduler, state, action, dueTime, comparer) {
-        this.scheduler = scheduler;
-        this.state = state;
-        this.action = action;
-        this.dueTime = dueTime;
-        this.comparer = comparer || defaultSubComparer;
-        this.disposable = new SingleAssignmentDisposable();
-    }
+  var ScheduledItem = Rx.internals.ScheduledItem = function (scheduler, state, action, dueTime, comparer) {
+    this.scheduler = scheduler;
+    this.state = state;
+    this.action = action;
+    this.dueTime = dueTime;
+    this.comparer = comparer || defaultSubComparer;
+    this.disposable = new SingleAssignmentDisposable();
+  }
 
-    ScheduledItem.prototype.invoke = function () {
-        this.disposable.setDisposable(this.invokeCore());
-    };
+  ScheduledItem.prototype.invoke = function () {
+    this.disposable.setDisposable(this.invokeCore());
+  };
 
-    ScheduledItem.prototype.compareTo = function (other) {
-        return this.comparer(this.dueTime, other.dueTime);
-    };
+  ScheduledItem.prototype.compareTo = function (other) {
+    return this.comparer(this.dueTime, other.dueTime);
+  };
 
-    ScheduledItem.prototype.isCancelled = function () {
-        return this.disposable.isDisposed;
-    };
+  ScheduledItem.prototype.isCancelled = function () {
+    return this.disposable.isDisposed;
+  };
 
-    ScheduledItem.prototype.invokeCore = function () {
-        return this.action(this.scheduler, this.state);
-    };
+  ScheduledItem.prototype.invokeCore = function () {
+    return this.action(this.scheduler, this.state);
+  };
 
   /** Provides a set of static properties to access commonly used schedulers. */
   var Scheduler = Rx.Scheduler = (function () {
@@ -742,54 +742,6 @@
       this._schedule = schedule;
       this._scheduleRelative = scheduleRelative;
       this._scheduleAbsolute = scheduleAbsolute;
-    }
-
-    function invokeRecImmediate(scheduler, pair) {
-      var state = pair.first, action = pair.second, group = new CompositeDisposable(),
-      recursiveAction = function (state1) {
-        action(state1, function (state2) {
-          var isAdded = false, isDone = false,
-          d = scheduler.scheduleWithState(state2, function (scheduler1, state3) {
-            if (isAdded) {
-              group.remove(d);
-            } else {
-              isDone = true;
-            }
-            recursiveAction(state3);
-            return disposableEmpty;
-          });
-          if (!isDone) {
-            group.add(d);
-            isAdded = true;
-          }
-        });
-      };
-      recursiveAction(state);
-      return group;
-    }
-
-    function invokeRecDate(scheduler, pair, method) {
-      var state = pair.first, action = pair.second, group = new CompositeDisposable(),
-      recursiveAction = function (state1) {
-        action(state1, function (state2, dueTime1) {
-          var isAdded = false, isDone = false,
-          d = scheduler[method].call(scheduler, state2, dueTime1, function (scheduler1, state3) {
-            if (isAdded) {
-              group.remove(d);
-            } else {
-              isDone = true;
-            }
-            recursiveAction(state3);
-            return disposableEmpty;
-          });
-          if (!isDone) {
-            group.add(d);
-            isAdded = true;
-          }
-        });
-      };
-      recursiveAction(state);
-      return group;
     }
 
     function invokeAction(scheduler, action) {
@@ -1043,34 +995,34 @@
     };
   }(Scheduler.prototype));
 
-    var SchedulePeriodicRecursive = Rx.internals.SchedulePeriodicRecursive = (function () {
-        function tick(command, recurse) {
-            recurse(0, this._period);
-            try {
-                this._state = this._action(this._state);
-            } catch (e) {
-                this._cancel.dispose();
-                throw e;
-            }
-        }
+  var SchedulePeriodicRecursive = Rx.internals.SchedulePeriodicRecursive = (function () {
+    function tick(command, recurse) {
+      recurse(0, this._period);
+      try {
+        this._state = this._action(this._state);
+      } catch (e) {
+        this._cancel.dispose();
+        throw e;
+      }
+    }
 
-        function SchedulePeriodicRecursive(scheduler, state, period, action) {
-            this._scheduler = scheduler;
-            this._state = state;
-            this._period = period;
-            this._action = action;
-        }
+    function SchedulePeriodicRecursive(scheduler, state, period, action) {
+      this._scheduler = scheduler;
+      this._state = state;
+      this._period = period;
+      this._action = action;
+    }
 
-        SchedulePeriodicRecursive.prototype.start = function () {
-            var d = new SingleAssignmentDisposable();
-            this._cancel = d;
-            d.setDisposable(this._scheduler.scheduleRecursiveWithRelativeAndState(0, this._period, tick.bind(this)));
+    SchedulePeriodicRecursive.prototype.start = function () {
+      var d = new SingleAssignmentDisposable();
+      this._cancel = d;
+      d.setDisposable(this._scheduler.scheduleRecursiveWithRelativeAndState(0, this._period, tick.bind(this)));
 
-            return d;
-        };
+      return d;
+    };
 
-        return SchedulePeriodicRecursive;
-    }());
+    return SchedulePeriodicRecursive;
+  }());
 
   /**
    * Gets a scheduler that schedules work immediately on the current thread.
@@ -1310,87 +1262,77 @@
     return new Scheduler(defaultNow, scheduleNow, scheduleRelative, scheduleAbsolute);
   })();
 
-    /** @private */
-    var CatchScheduler = (function (_super) {
+  var CatchScheduler = (function (__super__) {
 
-        function localNow() {
-            return this._scheduler.now();
+    function scheduleNow(state, action) {
+      return this._scheduler.scheduleWithState(state, this._wrap(action));
+    }
+
+    function scheduleRelative(state, dueTime, action) {
+      return this._scheduler.scheduleWithRelativeAndState(state, dueTime, this._wrap(action));
+    }
+
+    function scheduleAbsolute(state, dueTime, action) {
+      return this._scheduler.scheduleWithAbsoluteAndState(state, dueTime, this._wrap(action));
+    }
+
+    inherits(CatchScheduler, __super__);
+
+    function CatchScheduler(scheduler, handler) {
+      this._scheduler = scheduler;
+      this._handler = handler;
+      this._recursiveOriginal = null;
+      this._recursiveWrapper = null;
+      __super__.call(this, this._scheduler.now.bind(this._scheduler), scheduleNow, scheduleRelative, scheduleAbsolute);
+    }
+
+    CatchScheduler.prototype._clone = function (scheduler) {
+        return new CatchScheduler(scheduler, this._handler);
+    };
+
+    CatchScheduler.prototype._wrap = function (action) {
+      var parent = this;
+      return function (self, state) {
+        try {
+          return action(parent._getRecursiveWrapper(self), state);
+        } catch (e) {
+          if (!parent._handler(e)) { throw e; }
+          return disposableEmpty;
         }
+      };
+    };
 
-        function scheduleNow(state, action) {
-            return this._scheduler.scheduleWithState(state, this._wrap(action));
+    CatchScheduler.prototype._getRecursiveWrapper = function (scheduler) {
+      if (this._recursiveOriginal !== scheduler) {
+        this._recursiveOriginal = scheduler;
+        var wrapper = this._clone(scheduler);
+        wrapper._recursiveOriginal = scheduler;
+        wrapper._recursiveWrapper = wrapper;
+        this._recursiveWrapper = wrapper;
+      }
+      return this._recursiveWrapper;
+    };
+
+    CatchScheduler.prototype.schedulePeriodicWithState = function (state, period, action) {
+      var self = this, failed = false, d = new SingleAssignmentDisposable();
+
+      d.setDisposable(this._scheduler.schedulePeriodicWithState(state, period, function (state1) {
+        if (failed) { return null; }
+        try {
+          return action(state1);
+        } catch (e) {
+          failed = true;
+          if (!self._handler(e)) { throw e; }
+          d.dispose();
+          return null;
         }
+      }));
 
-        function scheduleRelative(state, dueTime, action) {
-            return this._scheduler.scheduleWithRelativeAndState(state, dueTime, this._wrap(action));
-        }
+      return d;
+    };
 
-        function scheduleAbsolute(state, dueTime, action) {
-            return this._scheduler.scheduleWithAbsoluteAndState(state, dueTime, this._wrap(action));
-        }
-
-        inherits(CatchScheduler, _super);
-
-        /** @private */
-        function CatchScheduler(scheduler, handler) {
-            this._scheduler = scheduler;
-            this._handler = handler;
-            this._recursiveOriginal = null;
-            this._recursiveWrapper = null;
-            _super.call(this, localNow, scheduleNow, scheduleRelative, scheduleAbsolute);
-        }
-
-        /** @private */
-        CatchScheduler.prototype._clone = function (scheduler) {
-            return new CatchScheduler(scheduler, this._handler);
-        };
-
-        /** @private */
-        CatchScheduler.prototype._wrap = function (action) {
-            var parent = this;
-            return function (self, state) {
-                try {
-                    return action(parent._getRecursiveWrapper(self), state);
-                } catch (e) {
-                    if (!parent._handler(e)) { throw e; }
-                    return disposableEmpty;
-                }
-            };
-        };
-
-        /** @private */
-        CatchScheduler.prototype._getRecursiveWrapper = function (scheduler) {
-            if (this._recursiveOriginal !== scheduler) {
-                this._recursiveOriginal = scheduler;
-                var wrapper = this._clone(scheduler);
-                wrapper._recursiveOriginal = scheduler;
-                wrapper._recursiveWrapper = wrapper;
-                this._recursiveWrapper = wrapper;
-            }
-            return this._recursiveWrapper;
-        };
-
-        /** @private */
-        CatchScheduler.prototype.schedulePeriodicWithState = function (state, period, action) {
-            var self = this, failed = false, d = new SingleAssignmentDisposable();
-
-            d.setDisposable(this._scheduler.schedulePeriodicWithState(state, period, function (state1) {
-                if (failed) { return null; }
-                try {
-                    return action(state1);
-                } catch (e) {
-                    failed = true;
-                    if (!self._handler(e)) { throw e; }
-                    d.dispose();
-                    return null;
-                }
-            }));
-
-            return d;
-        };
-
-        return CatchScheduler;
-    }(Scheduler));
+    return CatchScheduler;
+  }(Scheduler));
 
   /**
    *  Represents a notification to an observer.
@@ -1469,14 +1411,14 @@
     function _acceptObservable(observer) { return observer.onError(this.exception); }
     function toString () { return 'OnError(' + this.exception + ')'; }
 
-    return function (exception) {
+    return function (e) {
       var notification = new Notification('E');
-      notification.exception = exception;
+      notification.exception = e;
       notification._accept = _accept;
       notification._acceptObservable = _acceptObservable;
       notification.toString = toString;
       return notification;
-      };
+    };
   }());
 
   /**
@@ -1485,17 +1427,17 @@
    */
   var notificationCreateOnCompleted = Notification.createOnCompleted = (function () {
 
-      function _accept (onNext, onError, onCompleted) { return onCompleted(); }
-      function _acceptObservable(observer) { return observer.onCompleted(); }
-      function toString () { return 'OnCompleted()'; }
+    function _accept (onNext, onError, onCompleted) { return onCompleted(); }
+    function _acceptObservable(observer) { return observer.onCompleted(); }
+    function toString () { return 'OnCompleted()'; }
 
-      return function () {
-        var notification = new Notification('C');
-        notification._accept = _accept;
-        notification._acceptObservable = _acceptObservable;
-        notification.toString = toString;
-        return notification;
-      };
+    return function () {
+      var notification = new Notification('C');
+      notification._accept = _accept;
+      notification._acceptObservable = _acceptObservable;
+      notification.toString = toString;
+      return notification;
+    };
   }());
 
   var Enumerator = Rx.internals.Enumerator = function (next) {
@@ -2229,7 +2171,7 @@
    * @param {Any} [thisArg] The context to use calling the mapFn if provided.
    * @param {Scheduler} [scheduler] Optional scheduler to use for scheduling.  If not provided, defaults to Scheduler.currentThread.
    */
-  Observable.from = function (iterable, mapFn, thisArg, scheduler) {
+  var observableFrom = Observable.from = function (iterable, mapFn, thisArg, scheduler) {
     if (iterable == null) {
       throw new Error('iterable cannot be null.')
     }
@@ -2247,7 +2189,13 @@
         if (i < len || objIsIterable) {
           var result;
           if (objIsIterable) {
-            var next = it.next();
+            var next;
+            try {
+              next = it.next();
+            } catch (e) {
+              observer.onError(e);
+              return;
+            }
             if (next.done) {
               observer.onCompleted();
               return;
@@ -2255,7 +2203,7 @@
 
             result = next.value;
           } else {
-            result = list[i];
+            result = !!list.charAt ? list.charAt(i) : list[i];
           }
 
           if (mapFn && isCallable(mapFn)) {
@@ -3537,47 +3485,50 @@
     });
   };
 
-    function concatMap(source, selector, thisArg) {
-      return source.map(function (x, i) {
-        var result = selector.call(thisArg, x, i);
-        return isPromise(result) ? observableFromPromise(result) : result;
-      }).concatAll();
+  function concatMap(source, selector, thisArg) {
+    return source.map(function (x, i) {
+      var result = selector.call(thisArg, x, i, source);
+      isPromise(result) && (result = observableFromPromise(result));
+      (Array.isArray(result) || isIterable(result)) && (result = observableFrom(result));
+      return result;
+    }).concatAll();
+  }
+
+  /**
+   *  One of the Following:
+   *  Projects each element of an observable sequence to an observable sequence and merges the resulting observable sequences into one observable sequence.
+   *
+   * @example
+   *  var res = source.concatMap(function (x) { return Rx.Observable.range(0, x); });
+   *  Or:
+   *  Projects each element of an observable sequence to an observable sequence, invokes the result selector for the source element and each of the corresponding inner sequence's elements, and merges the results into one observable sequence.
+   *
+   *  var res = source.concatMap(function (x) { return Rx.Observable.range(0, x); }, function (x, y) { return x + y; });
+   *  Or:
+   *  Projects each element of the source observable sequence to the other observable sequence and merges the resulting observable sequences into one observable sequence.
+   *
+   *  var res = source.concatMap(Rx.Observable.fromArray([1,2,3]));
+   * @param {Function} selector A transform function to apply to each element or an observable sequence to project each element from the
+   * source sequence onto which could be either an observable or Promise.
+   * @param {Function} [resultSelector]  A transform function to apply to each element of the intermediate sequence.
+   * @returns {Observable} An observable sequence whose elements are the result of invoking the one-to-many transform function collectionSelector on each element of the input sequence and then mapping each of those sequence elements and their corresponding source element to a result element.
+   */
+  observableProto.selectConcat = observableProto.concatMap = function (selector, resultSelector, thisArg) {
+    if (typeof selector === 'function' && typeof resultSelector === 'function') {
+      return this.concatMap(function (x, i) {
+        var selectorResult = selector(x, i);
+        isPromise(selectorResult) && (selectorResult = observableFromPromise(selectorResult));
+        (Array.isArray(selectorResult) || isIterable(selectorResult)) && (selectorResult = observableFrom(selectorResult));
+
+        return selectorResult.map(function (y, i2) {
+          return resultSelector(x, y, i, i2);
+        });
+      });
     }
-
-    /**
-     *  One of the Following:
-     *  Projects each element of an observable sequence to an observable sequence and merges the resulting observable sequences into one observable sequence.
-     *
-     * @example
-     *  var res = source.concatMap(function (x) { return Rx.Observable.range(0, x); });
-     *  Or:
-     *  Projects each element of an observable sequence to an observable sequence, invokes the result selector for the source element and each of the corresponding inner sequence's elements, and merges the results into one observable sequence.
-     *
-     *  var res = source.concatMap(function (x) { return Rx.Observable.range(0, x); }, function (x, y) { return x + y; });
-     *  Or:
-     *  Projects each element of the source observable sequence to the other observable sequence and merges the resulting observable sequences into one observable sequence.
-     *
-     *  var res = source.concatMap(Rx.Observable.fromArray([1,2,3]));
-     * @param selector A transform function to apply to each element or an observable sequence to project each element from the
-     * source sequence onto which could be either an observable or Promise.
-     * @param {Function} [resultSelector]  A transform function to apply to each element of the intermediate sequence.
-     * @returns {Observable} An observable sequence whose elements are the result of invoking the one-to-many transform function collectionSelector on each element of the input sequence and then mapping each of those sequence elements and their corresponding source element to a result element.
-     */
-    observableProto.selectConcat = observableProto.concatMap = function (selector, resultSelector, thisArg) {
-      if (resultSelector) {
-          return this.concatMap(function (x, i) {
-            var selectorResult = selector(x, i),
-              result = isPromise(selectorResult) ? observableFromPromise(selectorResult) : selectorResult;
-
-            return result.map(function (y) {
-              return resultSelector(x, y, i);
-            });
-          });
-      }
-      return typeof selector === 'function' ?
-        concatMap(this, selector, thisArg) :
-        concatMap(this, function () { return selector; });
-    };
+    return typeof selector === 'function' ?
+      concatMap(this, selector, thisArg) :
+      concatMap(this, function () { return selector; });
+  };
 
   /**
    * Projects each notification of an observable sequence to an observable sequence and concats the resulting observable sequences into one observable sequence.
@@ -3859,48 +3810,50 @@
     return this.map(function (x) { return x[prop]; });
   };
 
-    function flatMap(source, selector, thisArg) {
-      return source.map(function (x, i) {
-        var result = selector.call(thisArg, x, i);
-        return isPromise(result) ? observableFromPromise(result) : result;
-      }).mergeObservable();
+  function flatMap(source, selector, thisArg) {
+    return source.map(function (x, i) {
+      var result = selector.call(thisArg, x, i, source);
+      isPromise(result) && (result = observableFromPromise(result));
+      (Array.isArray(result) || isIterable(result)) && (result = observableFrom(result));
+      return result;
+    }).mergeObservable();
+  }
+
+  /**
+   *  One of the Following:
+   *  Projects each element of an observable sequence to an observable sequence and merges the resulting observable sequences into one observable sequence.
+   *
+   * @example
+   *  var res = source.selectMany(function (x) { return Rx.Observable.range(0, x); });
+   *  Or:
+   *  Projects each element of an observable sequence to an observable sequence, invokes the result selector for the source element and each of the corresponding inner sequence's elements, and merges the results into one observable sequence.
+   *
+   *  var res = source.selectMany(function (x) { return Rx.Observable.range(0, x); }, function (x, y) { return x + y; });
+   *  Or:
+   *  Projects each element of the source observable sequence to the other observable sequence and merges the resulting observable sequences into one observable sequence.
+   *
+   *  var res = source.selectMany(Rx.Observable.fromArray([1,2,3]));
+   * @param {Function} selector A transform function to apply to each element or an observable sequence to project each element from the source sequence onto which could be either an observable or Promise.
+   * @param {Function} [resultSelector]  A transform function to apply to each element of the intermediate sequence.
+   * @param {Any} [thisArg] Object to use as this when executing callback.
+   * @returns {Observable} An observable sequence whose elements are the result of invoking the one-to-many transform function collectionSelector on each element of the input sequence and then mapping each of those sequence elements and their corresponding source element to a result element.
+   */
+  observableProto.selectMany = observableProto.flatMap = function (selector, resultSelector, thisArg) {
+    if (typeof selector === 'function' && typeof resultSelector === 'function') {
+      return this.flatMap(function (x, i) {
+        var selectorResult = selector(x, i);
+        isPromise(selectorResult) && (selectorResult = observableFromPromise(selectorResult));
+        (Array.isArray(selectorResult) || isIterable(selectorResult)) && (selectorResult = observableFrom(selectorResult));
+
+        return selectorResult.map(function (y, i2) {
+          return resultSelector(x, y, i, i2);
+        });
+      }, thisArg);
     }
-
-    /**
-     *  One of the Following:
-     *  Projects each element of an observable sequence to an observable sequence and merges the resulting observable sequences into one observable sequence.
-     *
-     * @example
-     *  var res = source.selectMany(function (x) { return Rx.Observable.range(0, x); });
-     *  Or:
-     *  Projects each element of an observable sequence to an observable sequence, invokes the result selector for the source element and each of the corresponding inner sequence's elements, and merges the results into one observable sequence.
-     *
-     *  var res = source.selectMany(function (x) { return Rx.Observable.range(0, x); }, function (x, y) { return x + y; });
-     *  Or:
-     *  Projects each element of the source observable sequence to the other observable sequence and merges the resulting observable sequences into one observable sequence.
-     *
-     *  var res = source.selectMany(Rx.Observable.fromArray([1,2,3]));
-     * @param selector A transform function to apply to each element or an observable sequence to project each element from the
-     * source sequence onto which could be either an observable or Promise.
-     * @param {Function} [resultSelector]  A transform function to apply to each element of the intermediate sequence.
-     * @param {Any} [thisArg] Object to use as this when executing callback.
-     * @returns {Observable} An observable sequence whose elements are the result of invoking the one-to-many transform function collectionSelector on each element of the input sequence and then mapping each of those sequence elements and their corresponding source element to a result element.
-     */
-    observableProto.selectMany = observableProto.flatMap = function (selector, resultSelector, thisArg) {
-      if (resultSelector) {
-          return this.flatMap(function (x, i) {
-            var selectorResult = selector(x, i),
-              result = isPromise(selectorResult) ? observableFromPromise(selectorResult) : selectorResult;
-
-            return result.map(function (y) {
-              return resultSelector(x, y, i);
-            });
-          }, thisArg);
-      }
-      return typeof selector === 'function' ?
-        flatMap(this, selector, thisArg) :
-        flatMap(this, function () { return selector; });
-    };
+    return typeof selector === 'function' ?
+      flatMap(this, selector, thisArg) :
+      flatMap(this, function () { return selector; });
+  };
 
   /**
    * Projects each notification of an observable sequence to an observable sequence and merges the resulting observable sequences into one observable sequence.
@@ -4154,46 +4107,40 @@
         return x[0];
     }
 
-    /**
-     * Applies an accumulator function over an observable sequence, returning the result of the aggregation as a single element in the result sequence. The specified seed value is used as the initial accumulator value.
-     * For aggregation behavior with incremental intermediate results, see Observable.scan.
-     * @example
-     * 1 - res = source.aggregate(function (acc, x) { return acc + x; });
-     * 2 - res = source.aggregate(0, function (acc, x) { return acc + x; });
-     * @param {Mixed} [seed] The initial accumulator value.
-     * @param {Function} accumulator An accumulator function to be invoked on each element.
-     * @returns {Observable} An observable sequence containing a single element with the final accumulator value.
-     */
-    observableProto.aggregate = function () {
-        var seed, hasSeed, accumulator;
-        if (arguments.length === 2) {
-            seed = arguments[0];
-            hasSeed = true;
-            accumulator = arguments[1];
-        } else {
-            accumulator = arguments[0];
-        }
-        return hasSeed ? this.scan(seed, accumulator).startWith(seed).finalValue() : this.scan(accumulator).finalValue();
-    };
+  /**
+   * Applies an accumulator function over an observable sequence, returning the result of the aggregation as a single element in the result sequence. The specified seed value is used as the initial accumulator value.
+   * For aggregation behavior with incremental intermediate results, see Observable.scan.
+   * @param {Mixed} [seed] The initial accumulator value.
+   * @param {Function} accumulator An accumulator function to be invoked on each element.
+   * @returns {Observable} An observable sequence containing a single element with the final accumulator value.
+   */
+  observableProto.aggregate = function () {
+    var seed, hasSeed, accumulator;
+    if (arguments.length === 2) {
+      seed = arguments[0];
+      hasSeed = true;
+      accumulator = arguments[1];
+    } else {
+      accumulator = arguments[0];
+    }
+    return hasSeed ? this.scan(seed, accumulator).startWith(seed).finalValue() : this.scan(accumulator).finalValue();
+  };
 
-    /**
-     * Applies an accumulator function over an observable sequence, returning the result of the aggregation as a single element in the result sequence. The specified seed value is used as the initial accumulator value.
-     * For aggregation behavior with incremental intermediate results, see Observable.scan.
-     * @example
-     * 1 - res = source.reduce(function (acc, x) { return acc + x; });
-     * 2 - res = source.reduce(function (acc, x) { return acc + x; }, 0);
-     * @param {Function} accumulator An accumulator function to be invoked on each element.
-     * @param {Any} [seed] The initial accumulator value.
-     * @returns {Observable} An observable sequence containing a single element with the final accumulator value.
-     */
-    observableProto.reduce = function (accumulator) {
-        var seed, hasSeed;
-        if (arguments.length === 2) {
-            hasSeed = true;
-            seed = arguments[1];
-        }
-        return hasSeed ? this.scan(seed, accumulator).startWith(seed).finalValue() : this.scan(accumulator).finalValue();
-    };
+  /**
+   * Applies an accumulator function over an observable sequence, returning the result of the aggregation as a single element in the result sequence. The specified seed value is used as the initial accumulator value.
+   * For aggregation behavior with incremental intermediate results, see Observable.scan.
+   * @param {Function} accumulator An accumulator function to be invoked on each element.
+   * @param {Any} [seed] The initial accumulator value.
+   * @returns {Observable} An observable sequence containing a single element with the final accumulator value.
+   */
+  observableProto.reduce = function (accumulator) {
+    var seed, hasSeed;
+    if (arguments.length === 2) {
+      hasSeed = true;
+      seed = arguments[1];
+    }
+    return hasSeed ? this.scan(seed, accumulator).startWith(seed).finalValue() : this.scan(accumulator).finalValue();
+  };
 
     /**
      * Determines whether any element of an observable sequence satisfies a condition if present, else if any items are in the sequence.
@@ -4400,33 +4347,27 @@
         });
     };
 
-    /**
-     * Computes the average of an observable sequence of values that are in the sequence or obtained by invoking a transform function on each element of the input sequence if present.
-     * @example
-     * var res = res = source.average();
-     * var res = res = source.average(function (x) { return x.value; });
-     * @param {Function} [selector] A transform function to apply to each element.
-     * @param {Any} [thisArg] Object to use as this when executing callback.
-     * @returns {Observable} An observable sequence containing a single element with the average of the sequence of values.
-     */
-    observableProto.average = function (keySelector, thisArg) {
-        return keySelector ?
-            this.select(keySelector, thisArg).average() :
-            this.scan({
-                sum: 0,
-                count: 0
-            }, function (prev, cur) {
-                return {
-                    sum: prev.sum + cur,
-                    count: prev.count + 1
-                };
-            }).finalValue().select(function (s) {
-                if (s.count === 0) {
-                    throw new Error('The input sequence was empty');
-                }
-                return s.sum / s.count;
-            });
-    };
+  /**
+   * Computes the average of an observable sequence of values that are in the sequence or obtained by invoking a transform function on each element of the input sequence if present.
+   * @param {Function} [selector] A transform function to apply to each element.
+   * @param {Any} [thisArg] Object to use as this when executing callback.
+   * @returns {Observable} An observable sequence containing a single element with the average of the sequence of values.
+   */
+  observableProto.average = function (keySelector, thisArg) {
+    return keySelector && isFunction(keySelector) ?
+      this.select(keySelector, thisArg).average() :
+      this.scan({sum: 0, count: 0 }, function (prev, cur) {
+        return {
+          sum: prev.sum + cur,
+          count: prev.count + 1
+        };
+      }).finalValue().map(function (s) {
+        if (s.count === 0) {
+          throw new Error('The input sequence was empty');
+        }
+        return s.sum / s.count;
+      });
+  };
 
   function sequenceEqualArray(first, second, comparer) {
     return new AnonymousObservable(function (observer) {
@@ -4848,36 +4789,17 @@
     };
   }
 
-  var fnString = 'function';
+  var fnString = 'function',
+      throwString = 'throw';
 
   function toThunk(obj, ctx) {
-    if (Array.isArray(obj)) {
-      return objectToThunk.call(ctx, obj);
-    }
-
-    if (isGeneratorFunction(obj)) {
-      return observableSpawn(obj.call(ctx));
-    }
-
-    if (isGenerator(obj)) {
-      return observableSpawn(obj);
-    }
-
-    if (isObservable(obj)) {
-      return observableToThunk(obj);
-    }
-
-    if (isPromise(obj)) {
-      return promiseToThunk(obj);
-    }
-
-    if (typeof obj === fnString) {
-      return obj;
-    }
-
-    if (isObject(obj) || Array.isArray(obj)) {
-      return objectToThunk.call(ctx, obj);
-    }
+    if (Array.isArray(obj)) {  return objectToThunk.call(ctx, obj); }
+    if (isGeneratorFunction(obj)) { return observableSpawn(obj.call(ctx)); }
+    if (isGenerator(obj)) {  return observableSpawn(obj); }
+    if (isObservable(obj)) { return observableToThunk(obj); }
+    if (isPromise(obj)) { return promiseToThunk(obj); }
+    if (typeof obj === fnString) { return obj; }
+    if (isObject(obj) || Array.isArray(obj)) { return objectToThunk.call(ctx, obj); }
 
     return obj;
   }
@@ -4929,7 +4851,7 @@
     }
   }
 
-  function observableToThink(observable) {
+  function observableToThunk(observable) {
     return function (fn) {
       var value, hasValue = false;
       observable.subscribe(
@@ -4953,7 +4875,7 @@
   }
 
   function isObservable(obj) {
-    return obj && obj.prototype.subscribe === fnString;
+    return obj && typeof obj.subscribe === fnString;
   }
 
   function isGeneratorFunction(obj) {
@@ -4961,7 +4883,7 @@
   }
 
   function isGenerator(obj) {
-    return obj && typeof obj.next === fnString && typeof obj.throw === fnString;
+    return obj && typeof obj.next === fnString && typeof obj[throwString] === fnString;
   }
 
   function isObject(val) {
@@ -4978,7 +4900,7 @@
 
     return function (done) {
       var ctx = this,
-        gen = fan;
+        gen = fn;
 
       if (isGenFun) {
         var args = slice.call(arguments),
@@ -5005,7 +4927,7 @@
 
         if (err) {
           try {
-            ret = gen.throw(err);
+            ret = gen[throwString](err);
           } catch (e) {
             return exit(e);
           }
@@ -5088,6 +5010,13 @@
       }
     }
   };
+
+  function error(err) {
+    if (!err) { return; }
+    timeoutScheduler.schedule(function(){
+      throw err;
+    });
+  }
 
   /**
    * Invokes the specified function asynchronously on the specified scheduler, surfacing the result through an observable sequence.
@@ -7941,7 +7870,7 @@
    * @returns {Observable} The source sequence switching to the other sequence in case of a timeout.
    */
   observableProto.timeout = function (dueTime, other, scheduler) {
-    other || (other = observableThrow(new Error('Timeout')));
+    (other == null || typeof other === 'string') && (other = observableThrow(new Error(other || 'Timeout')));
     isScheduler(scheduler) || (scheduler = timeoutScheduler);
 
     var source = this, schedulerMethod = dueTime instanceof Date ?
@@ -8490,6 +8419,44 @@
       return new CompositeDisposable(
         scheduler[schedulerMethod](endTime, observer.onCompleted.bind(observer)),
         source.subscribe(observer));
+    });
+  };
+
+  /**
+   * Executes a transducer to transform the observable sequence 
+   * @param {Transducer} transducer A transducer to execute
+   * @returns {Observable} An Observable sequence containing the results from the transducer.
+   */
+  observableProto.transduce = function(transducer) {
+    var source = this;
+
+    function transformForObserver(observer) {
+      return {
+        init: function() {
+          return observer;
+        },
+        step: function(obs, input) {
+          return obs.onNext(input);
+        },
+        result: function(obs) {
+          return obs.onCompleted();
+        }
+      };
+    }
+
+    return new AnonymousObservable(function(observer) {
+      var xform = transducer(transformForObserver(observer));
+      return source.subscribe(
+        function(v) { 
+          try {
+            xform.step(observer, v);
+          } catch (e) {
+            observer.onError(e);
+          }
+        }, 
+        observer.onError.bind(observer), 
+        function() { xform.result(observer); }
+      );
     });
   };
 
