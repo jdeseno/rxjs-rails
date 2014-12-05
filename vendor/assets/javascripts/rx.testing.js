@@ -211,48 +211,86 @@ var ReactiveTest = Rx.ReactiveTest = {
         this.disposes.push(this.scheduler.clock);
     };
 
-    /** @private */
-    var MockObserver = (function (_super) {
-        inherits(MockObserver, _super);
+  var MockObserver = (function (__super__) {
+    inherits(MockObserver, __super__);
 
-        /*
-         * @constructor
-         * @prviate
-         */
-        function MockObserver(scheduler) {
-            _super.call(this);
-            this.scheduler = scheduler;
-            this.messages = [];
+    function MockObserver(scheduler) {
+      __super__.call(this);
+      this.scheduler = scheduler;
+      this.messages = [];
+    }
+
+    var MockObserverPrototype = MockObserver.prototype;
+
+    MockObserverPrototype.onNext = function (value) {
+      this.messages.push(new Recorded(this.scheduler.clock, Notification.createOnNext(value)));
+    };
+
+    MockObserverPrototype.onError = function (exception) {
+      this.messages.push(new Recorded(this.scheduler.clock, Notification.createOnError(exception)));
+    };
+
+    MockObserverPrototype.onCompleted = function () {
+      this.messages.push(new Recorded(this.scheduler.clock, Notification.createOnCompleted()));
+    };
+
+    return MockObserver;
+  })(Observer);
+
+  function MockPromise(scheduler, messages) {
+    var self = this;
+    this.scheduler = scheduler;
+    this.messages = messages;
+    this.subscriptions = [];
+    this.observers = [];
+    for (var i = 0, len = this.messages.length; i < len; i++) {
+      var message = this.messages[i],
+          notification = message.value;
+      (function (innerNotification) {
+        scheduler.scheduleAbsoluteWithState(null, message.time, function () {
+          var obs = self.observers.slice(0);
+
+          for (var j = 0, jLen = obs.length; j < jLen; j++) {
+            innerNotification.accept(obs[j]);
+          }
+          return disposableEmpty;
+        });
+      })(notification);
+    }
+  }
+
+  MockPromise.prototype.then = function (onResolved, onRejected) {
+    var self = this;
+
+    this.subscriptions.push(new Subscription(this.scheduler.clock));
+    var index = this.subscriptions.length - 1;
+
+    var newPromise;
+
+    var observer = Rx.Observer.create(
+      function (x) {
+        var retValue = onResolved(x);
+        if (retValue && typeof retValue.then === 'function') {
+          newPromise = retValue;
+        } else {
+          var ticks = self.scheduler.clock;
+          newPromise = new MockPromise(self.scheduler, [Rx.ReactiveTest.onNext(ticks, undefined), Rx.ReactiveTest.onCompleted(ticks)]);
         }
+        var idx = self.observers.indexOf(observer);
+        self.observers.splice(idx, 1);
+        self.subscriptions[index] = new Subscription(self.subscriptions[index].subscribe, self.scheduler.clock);
+      },
+      function (err) {
+        onRejected(err);
+        var idx = self.observers.indexOf(observer);
+        self.observers.splice(idx, 1);
+        self.subscriptions[index] = new Subscription(self.subscriptions[index].subscribe, self.scheduler.clock);
+      }
+    );
+    this.observers.push(observer);
 
-        var MockObserverPrototype = MockObserver.prototype;
-
-        /*
-         * @memberOf MockObserverPrototype#
-         * @prviate
-         */
-        MockObserverPrototype.onNext = function (value) {
-            this.messages.push(new Recorded(this.scheduler.clock, Notification.createOnNext(value)));
-        };
-
-        /*
-         * @memberOf MockObserverPrototype#
-         * @prviate
-         */
-        MockObserverPrototype.onError = function (exception) {
-            this.messages.push(new Recorded(this.scheduler.clock, Notification.createOnError(exception)));
-        };
-
-        /*
-         * @memberOf MockObserverPrototype#
-         * @prviate
-         */
-        MockObserverPrototype.onCompleted = function () {
-            this.messages.push(new Recorded(this.scheduler.clock, Notification.createOnCompleted()));
-        };
-
-        return MockObserver;
-    })(Observer);
+    return newPromise || new MockPromise(this.scheduler, this.messages);
+  };
 
   var HotObservable = (function (__super__) {
 
@@ -296,45 +334,40 @@ var ReactiveTest = Rx.ReactiveTest = {
     return HotObservable;
   })(Observable);
 
-    /** @private */
-    var ColdObservable = (function (_super) {
+  var ColdObservable = (function (__super__) {
 
-        function subscribe(observer) {
-            var message, notification, observable = this;
-            this.subscriptions.push(new Subscription(this.scheduler.clock));
-            var index = this.subscriptions.length - 1;
-            var d = new CompositeDisposable();
-            for (var i = 0, len = this.messages.length; i < len; i++) {
-                message = this.messages[i];
-                notification = message.value;
-                (function (innerNotification) {
-                    d.add(observable.scheduler.scheduleRelativeWithState(null, message.time, function () {
-                        innerNotification.accept(observer);
-                        return disposableEmpty;
-                    }));
-                })(notification);
-            }
-            return disposableCreate(function () {
-                observable.subscriptions[index] = new Subscription(observable.subscriptions[index].subscribe, observable.scheduler.clock);
-                d.dispose();
-            });
-        }
+    function subscribe(observer) {
+      var message, notification, observable = this;
+      this.subscriptions.push(new Subscription(this.scheduler.clock));
+      var index = this.subscriptions.length - 1;
+      var d = new CompositeDisposable();
+      for (var i = 0, len = this.messages.length; i < len; i++) {
+        message = this.messages[i];
+        notification = message.value;
+        (function (innerNotification) {
+          d.add(observable.scheduler.scheduleRelativeWithState(null, message.time, function () {
+            innerNotification.accept(observer);
+            return disposableEmpty;
+          }));
+        })(notification);
+      }
+      return disposableCreate(function () {
+        observable.subscriptions[index] = new Subscription(observable.subscriptions[index].subscribe, observable.scheduler.clock);
+        d.dispose();
+      });
+    }
 
-        inherits(ColdObservable, _super);
+    inherits(ColdObservable, __super__);
 
-        /**
-         * @private
-         * @constructor
-         */
-        function ColdObservable(scheduler, messages) {
-            _super.call(this, subscribe);
-            this.scheduler = scheduler;
-            this.messages = messages;
-            this.subscriptions = [];
-        }
+    function ColdObservable(scheduler, messages) {
+      __super__.call(this, subscribe);
+      this.scheduler = scheduler;
+      this.messages = messages;
+      this.subscriptions = [];
+    }
 
-        return ColdObservable;
-    })(Observable);
+    return ColdObservable;
+  })(Observable);
 
   /** Virtual time scheduler used for testing applications and libraries built using Reactive Extensions. */
   Rx.TestScheduler = (function (__super__) {
@@ -404,19 +437,19 @@ var ReactiveTest = Rx.ReactiveTest = {
         source = create();
         return disposableEmpty;
       });
-      
+
       this.scheduleAbsoluteWithState(null, subscribed, function () {
         subscription = source.subscribe(observer);
         return disposableEmpty;
       });
-      
+
       this.scheduleAbsoluteWithState(null, disposed, function () {
         subscription.dispose();
         return disposableEmpty;
       });
-      
+
       this.start();
-      
+
       return observer;
     };
 
@@ -463,7 +496,7 @@ var ReactiveTest = Rx.ReactiveTest = {
     };
 
     /**
-     * Creates a resolved promise with the given value and ticks 
+     * Creates a resolved promise with the given value and ticks
      * @param {Number} ticks The absolute time of the resolution.
      * @param {Any} value The value to yield at the given tick.
      * @returns {MockPromise} A mock Promise which fulfills with the given value.
@@ -473,7 +506,7 @@ var ReactiveTest = Rx.ReactiveTest = {
     };
 
     /**
-     * Creates a rejected promise with the given reason and ticks 
+     * Creates a rejected promise with the given reason and ticks
      * @param {Number} ticks The absolute time of the resolution.
      * @param {Any} reason The reason for rejection to yield at the given tick.
      * @returns {MockPromise} A mock Promise which rejects with the given reason.

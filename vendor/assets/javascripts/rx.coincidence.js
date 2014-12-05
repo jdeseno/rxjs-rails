@@ -57,7 +57,7 @@
       duplicatekey = "duplicate key";
 
     function isPrime(candidate) {
-      if (candidate & 1 === 0) { return candidate === 2; }
+      if ((candidate & 1) === 0) { return candidate === 2; }
       var num1 = Math.sqrt(candidate),
         num2 = 3;
       while (num2 <= num1) {
@@ -86,7 +86,7 @@
       if (!str.length) { return hash; }
       for (var i = 0, len = str.length; i < len; i++) {
         var character = str.charCodeAt(i);
-        hash = ((hash<<5)-hash)+character;
+        hash = ((hash << 5) - hash) + character;
         hash = hash & hash;
       }
       return hash;
@@ -120,10 +120,10 @@
           if (typeof valueOf === 'number') { return numberHashFn(valueOf); }
           if (typeof obj === 'string') { return stringHashFn(valueOf); }
         }
-        if (obj.getHashCode) { return obj.getHashCode(); }
+        if (obj.hashCode) { return obj.hashCode(); }
 
         var id = 17 * uniqueIdCounter++;
-        obj.getHashCode = function () { return id; };
+        obj.hashCode = function () { return id; };
         return id;
       };
     }());
@@ -156,7 +156,7 @@
     };
 
     dictionaryProto.add = function (key, value) {
-      return this._insert(key, value, true);
+      this._insert(key, value, true);
     };
 
     dictionaryProto._insert = function (key, value, add) {
@@ -384,7 +384,7 @@
             var result;
             try {
               result = resultSelector(v, value);
-            } catch(exn) {
+            } catch (exn) {
               observer.onError(exn);
               return;
             }
@@ -399,7 +399,7 @@
         })
       );
       return group;
-    });
+    }, left);
   };
 
   /**
@@ -511,7 +511,7 @@
       );
 
       return r;
-    });
+    }, left);
   };
 
     /**
@@ -581,7 +581,7 @@
       }));
 
       return r;
-    });
+    }, source);
   }
 
   function observableWindowWithClosingSelector(windowClosingSelector) {
@@ -601,7 +601,7 @@
           win.onCompleted();
           observer.onCompleted();
       }));
-      
+
       function createWindowClose () {
         var windowClose;
         try {
@@ -628,7 +628,7 @@
 
       createWindowClose();
       return r;
-    });
+    }, source);
   }
 
   /**
@@ -652,7 +652,7 @@
         },
         observer.onError.bind(observer),
         observer.onCompleted.bind(observer));
-    });
+    }, source);
   };
 
   /**
@@ -787,7 +787,7 @@
       }));
 
       return refCountDisposable;
-    });
+    }, source);
   };
 
   var GroupedObservable = (function (__super__) {

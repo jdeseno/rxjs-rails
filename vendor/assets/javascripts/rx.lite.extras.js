@@ -43,6 +43,7 @@
     internals = Rx.internals,
     helpers = Rx.helpers,
     ScheduledObserver = internals.ScheduledObserver,
+    SerialDisposable = Rx.SerialDisposable,
     SingleAssignmentDisposable = Rx.SingleAssignmentDisposable,
     CompositeDisposable = Rx.CompositeDisposable,
     RefCountDisposable = Rx.RefCountDisposable,
@@ -138,8 +139,9 @@
   var ObserveOnObserver = (function (__super__) {
     inherits(ObserveOnObserver, __super__);
 
-    function ObserveOnObserver() {
-      __super__.apply(this, arguments);
+    function ObserveOnObserver(scheduler, observer, cancel) {
+      __super__.call(this, scheduler, observer);
+      this._cancel = cancel;
     }
 
     ObserveOnObserver.prototype.next = function (value) {
@@ -155,6 +157,12 @@
     ObserveOnObserver.prototype.completed = function () {
       __super__.prototype.completed.call(this);
       this.ensureActive();
+    };
+
+    ObserveOnObserver.prototype.dispose = function () {
+      __super__.prototype.dispose.call(this);
+      this._cancel && this._cancel.dispose();
+      this._cancel = null;
     };
 
     return ObserveOnObserver;
@@ -173,7 +181,7 @@
     var source = this;
     return new AnonymousObservable(function (observer) {
       return source.subscribe(new ObserveOnObserver(scheduler, observer));
-    });
+    }, source);
   };
 
    /**
@@ -195,7 +203,7 @@
         d.setDisposable(new ScheduledDisposable(scheduler, source.subscribe(observer)));
       }));
       return d;
-    });
+    }, source);
   };
 
   /**
@@ -443,20 +451,20 @@
         function (x) {
           for (var i = 0, len = q.length; i < len; i++) { q[i].onNext(x); }
           var c = n - count + 1;
-          c >=0 && c % skip === 0 && q.shift().onCompleted();
+          c >= 0 && c % skip === 0 && q.shift().onCompleted();
           ++n % skip === 0 && createWindow();
-        }, 
+        },
         function (e) {
           while (q.length > 0) { q.shift().onError(e); }
           observer.onError(e);
-        }, 
+        },
         function () {
           while (q.length > 0) { q.shift().onCompleted(); }
           observer.onCompleted();
         }
       ));
       return refCountDisposable;
-    });
+    }, source);
   };
 
   /**
@@ -479,7 +487,7 @@
         observer.onNext(q);
         observer.onCompleted();
       });
-    });
+    }, source);
   };
 
     /**
@@ -493,22 +501,18 @@
      * @returns {Observable} An observable sequence that contains the specified default value if the source is empty; otherwise, the elements of the source itself.
      */
     observableProto.defaultIfEmpty = function (defaultValue) {
-        var source = this;
-        if (defaultValue === undefined) {
-            defaultValue = null;
-        }
-        return new AnonymousObservable(function (observer) {
-            var found = false;
-            return source.subscribe(function (x) {
-                found = true;
-                observer.onNext(x);
-            }, observer.onError.bind(observer), function () {
-                if (!found) {
-                    observer.onNext(defaultValue);
-                }
-                observer.onCompleted();
-            });
+      var source = this;
+      defaultValue === undefined && (defaultValue = null);
+      return new AnonymousObservable(function (observer) {
+        var found = false;
+        return source.subscribe(function (x) {
+          found = true;
+          observer.onNext(x);
+        }, observer.onError.bind(observer), function () {
+          !found && observer.onNext(defaultValue);
+          observer.onCompleted();
         });
+      }, this);
     };
 
   // Swap out for Array.findIndex
@@ -561,7 +565,7 @@
       },
       observer.onError.bind(observer),
       observer.onCompleted.bind(observer));
-    });
+    }, this);
   };
 
     return Rx;

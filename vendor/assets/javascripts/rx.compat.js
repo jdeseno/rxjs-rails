@@ -24,7 +24,7 @@
   var Rx = {
       internals: {},
       config: {
-        Promise: root.Promise // Detect if promise exists
+        Promise: root.Promise,
       },
       helpers: { }
   };
@@ -66,6 +66,104 @@
   var objectDisposed = 'Object has been disposed';
   function checkDisposed() { if (this.isDisposed) { throw new Error(objectDisposed); } }
 
+  Rx.config.longStackSupport = false;
+  var hasStacks = false;
+  try {
+    throw new Error();
+  } catch (e) {
+    hasStacks = !!e.stack;
+  }
+
+  // All code after this point will be filtered from stack traces reported by RxJS
+  var rStartingLine = captureLine(), rFileName;
+
+  var STACK_JUMP_SEPARATOR = "From previous event:";
+
+  function makeStackTraceLong(error, observable) {
+      // If possible, transform the error stack trace by removing Node and RxJS
+      // cruft, then concatenating with the stack trace of `observable`.
+      if (hasStacks &&
+          observable.stack &&
+          typeof error === "object" &&
+          error !== null &&
+          error.stack &&
+          error.stack.indexOf(STACK_JUMP_SEPARATOR) === -1
+      ) {
+        var stacks = [];
+        for (var o = observable; !!o; o = o.source) {
+          if (o.stack) {
+            stacks.unshift(o.stack);
+          }
+        }
+        stacks.unshift(error.stack);
+
+        var concatedStacks = stacks.join("\n" + STACK_JUMP_SEPARATOR + "\n");
+        error.stack = filterStackString(concatedStacks);
+    }
+  }
+
+  function filterStackString(stackString) {
+    var lines = stackString.split("\n"),
+        desiredLines = [];
+    for (var i = 0, len = lines.length; i < len; i++) {
+      var line = lines[i];
+
+      if (!isInternalFrame(line) && !isNodeFrame(line) && line) {
+        desiredLines.push(line);
+      }
+    }
+    return desiredLines.join("\n");
+  }
+
+  function isInternalFrame(stackLine) {
+    var fileNameAndLineNumber = getFileNameAndLineNumber(stackLine);
+    if (!fileNameAndLineNumber) {
+      return false;
+    }
+    var fileName = fileNameAndLineNumber[0], lineNumber = fileNameAndLineNumber[1];
+
+    console.log(rFileName, rStartingLine, rEndingLine);
+
+    return fileName === rFileName &&
+      lineNumber >= rStartingLine &&
+      lineNumber <= rEndingLine;
+  }
+
+  function isNodeFrame(stackLine) {
+    return stackLine.indexOf("(module.js:") !== -1 ||
+      stackLine.indexOf("(node.js:") !== -1;
+  }
+
+  function captureLine() {
+    if (!hasStacks) { return; }
+
+    try {
+      throw new Error();
+    } catch (e) {
+      var lines = e.stack.split("\n");
+      var firstLine = lines[0].indexOf("@") > 0 ? lines[1] : lines[2];
+      var fileNameAndLineNumber = getFileNameAndLineNumber(firstLine);
+      if (!fileNameAndLineNumber) { return; }
+
+      rFileName = fileNameAndLineNumber[0];
+      return fileNameAndLineNumber[1];
+    }
+  }
+
+  function getFileNameAndLineNumber(stackLine) {
+    // Named functions: "at functionName (filename:lineNumber:columnNumber)"
+    var attempt1 = /at .+ \((.+):(\d+):(?:\d+)\)$/.exec(stackLine);
+    if (attempt1) { return [attempt1[1], Number(attempt1[2])]; }
+
+    // Anonymous functions: "at filename:lineNumber:columnNumber"
+    var attempt2 = /at ([^ ]+):(\d+):(?:\d+)$/.exec(stackLine);
+    if (attempt2) { return [attempt2[1], Number(attempt2[2])]; }
+
+    // Firefox style: "function@filename:lineNumber or @filename:lineNumber"
+    var attempt3 = /.*@(.+):(\d+)$/.exec(stackLine);
+    if (attempt3) { return [attempt3[1], Number(attempt3[2])]; }
+  }
+
   // Shim in iterator support
   var $iterator$ = (typeof Symbol === 'function' && Symbol.iterator) ||
     '_es6shim_iterator_';
@@ -76,7 +174,21 @@
 
   var doneEnumerator = Rx.doneEnumerator = { done: true, value: undefined };
 
-  Rx.iterator = $iterator$;
+  var isIterable = Rx.helpers.isIterable = function (o) {
+    return o[$iterator$] !== undefined;
+  }
+
+  var isArrayLike = Rx.helpers.isArrayLike = function (o) {
+    return o && o.length !== undefined;
+  }
+
+  Rx.helpers.iterator = $iterator$;
+
+  var deprecate = Rx.helpers.deprecate = function (name, alternative) {
+    /*if (typeof console !== "undefined" && typeof console.warn === "function") {
+      console.warn(name + ' is deprecated, use ' + alternative + ' instead.', new Error('').stack);
+    }*/
+  }
 
   /** `Object#toString` result shortcuts */
   var argsClass = '[object Arguments]',
@@ -93,15 +205,16 @@
   var toString = Object.prototype.toString,
     hasOwnProperty = Object.prototype.hasOwnProperty,
     supportsArgsClass = toString.call(arguments) == argsClass, // For less <IE9 && FF<4
-    suportNodeClass,
+    supportNodeClass,
     errorProto = Error.prototype,
     objectProto = Object.prototype,
+    stringProto = String.prototype,
     propertyIsEnumerable = objectProto.propertyIsEnumerable;
 
   try {
-    suportNodeClass = !(toString.call(document) == objectClass && !({ 'toString': 0 } + ''));
-  } catch(e) {
-    suportNodeClass = true;
+    supportNodeClass = !(toString.call(document) == objectClass && !({ 'toString': 0 } + ''));
+  } catch (e) {
+    supportNodeClass = true;
   }
 
   var shadowedProps = [
@@ -206,7 +319,7 @@
     return typeof value.toString != 'function' && typeof (value + '') == 'string';
   }
 
-  function isArguments(value) {
+  var isArguments = function(value) {
     return (value && typeof value == 'object') ? toString.call(value) == argsClass : false;
   }
 
@@ -262,10 +375,10 @@
 
       case numberClass:
         // treat `NaN` vs. `NaN` as equal
-        return (a != +a)
-          ? b != +b
+        return (a != +a) ?
+          b != +b :
           // but treat `-0` vs. `+0` as not equal
-          : (a == 0 ? (1 / a == 1 / b) : a == +b);
+          (a == 0 ? (1 / a == 1 / b) : a == +b);
 
       case regexpClass:
       case stringClass:
@@ -1175,15 +1288,13 @@ if (!Array.prototype.forEach) {
     return SchedulePeriodicRecursive;
   }());
 
-  /**
-   * Gets a scheduler that schedules work immediately on the current thread.
-   */
+  /** Gets a scheduler that schedules work immediately on the current thread. */
   var immediateScheduler = Scheduler.immediate = (function () {
 
     function scheduleNow(state, action) { return action(this, state); }
 
     function scheduleRelative(state, dueTime, action) {
-      var dt = normalizeTime(dt);
+      var dt = normalizeTime(dueTime);
       while (dt - this.now() > 0) { }
       return action(this, state);
     }
@@ -1297,24 +1408,24 @@ if (!Array.prototype.forEach) {
           oldHandler = root.onmessage;
       // Test for async
       root.onmessage = function () { isAsync = true; };
-      root.postMessage('','*');
+      root.postMessage('', '*');
       root.onmessage = oldHandler;
 
       return isAsync;
     }
 
-    // Use in order, nextTick, setImmediate, postMessage, MessageChannel, script readystatechanged, setTimeout
-    if (typeof process !== 'undefined' && {}.toString.call(process) === '[object process]') {
-      scheduleMethod = process.nextTick;
-    } else if (typeof setImmediate === 'function') {
+    // Use in order, setImmediate, nextTick, postMessage, MessageChannel, script readystatechanged, setTimeout
+    if (typeof setImmediate === 'function') {
       scheduleMethod = setImmediate;
       clearMethod = clearImmediate;
+    } else if (typeof process !== 'undefined' && {}.toString.call(process) === '[object process]') {
+      scheduleMethod = process.nextTick;
     } else if (postMessageSupported()) {
       var MSG_PREFIX = 'ms.rx.schedule' + Math.random(),
         tasks = {},
         taskId = 0;
 
-      function onGlobalPostMessage(event) {
+      var onGlobalPostMessage = function (event) {
         // Only if we're a match to avoid any other global events
         if (typeof event.data === 'string' && event.data.substring(0, MSG_PREFIX.length) === MSG_PREFIX) {
           var handleId = event.data.substring(MSG_PREFIX.length),
@@ -1615,8 +1726,8 @@ if (!Array.prototype.forEach) {
       var e;
       try {
         e = sources[$iterator$]();
-      } catch(err) {
-        observer.onError();
+      } catch (err) {
+        observer.onError(err);
         return;
       }
 
@@ -1657,14 +1768,14 @@ if (!Array.prototype.forEach) {
     });
   };
 
-  Enumerable.prototype.catchException = function () {
+  Enumerable.prototype.catchError = function () {
     var sources = this;
     return new AnonymousObservable(function (observer) {
       var e;
       try {
         e = sources[$iterator$]();
-      } catch(err) {
-        observer.onError();
+      } catch (err) {
+        observer.onError(err);
         return;
       }
 
@@ -1802,7 +1913,7 @@ if (!Array.prototype.forEach) {
    * @param {Scheduler} scheduler Scheduler to schedule observer messages on.
    * @returns {Observer} Observer whose messages are scheduled on the given scheduler.
    */
-  Observer.notifyOn = function (scheduler) {
+  Observer.prototype.notifyOn = function (scheduler) {
     return new ObserveOnObserver(scheduler, this);
   };
 
@@ -1983,23 +2094,17 @@ if (!Array.prototype.forEach) {
 
     ScheduledObserver.prototype.next = function (value) {
       var self = this;
-      this.queue.push(function () {
-        self.observer.onNext(value);
-      });
+      this.queue.push(function () { self.observer.onNext(value); });
     };
 
-    ScheduledObserver.prototype.error = function (err) {
+    ScheduledObserver.prototype.error = function (e) {
       var self = this;
-      this.queue.push(function () {
-        self.observer.onError(err);
-      });
+      this.queue.push(function () { self.observer.onError(e); });
     };
 
     ScheduledObserver.prototype.completed = function () {
       var self = this;
-      this.queue.push(function () {
-        self.observer.onCompleted();
-      });
+      this.queue.push(function () { self.observer.onCompleted(); });
     };
 
     ScheduledObserver.prototype.ensureActive = function () {
@@ -2040,8 +2145,9 @@ if (!Array.prototype.forEach) {
   var ObserveOnObserver = (function (__super__) {
     inherits(ObserveOnObserver, __super__);
 
-    function ObserveOnObserver() {
-      __super__.apply(this, arguments);
+    function ObserveOnObserver(scheduler, observer, cancel) {
+      __super__.call(this, scheduler, observer);
+      this._cancel = cancel;
     }
 
     ObserveOnObserver.prototype.next = function (value) {
@@ -2059,6 +2165,12 @@ if (!Array.prototype.forEach) {
       this.ensureActive();
     };
 
+    ObserveOnObserver.prototype.dispose = function () {
+      __super__.prototype.dispose.call(this);
+      this._cancel && this._cancel.dispose();
+      this._cancel = null;
+    };
+
     return ObserveOnObserver;
   })(ScheduledObserver);
 
@@ -2070,6 +2182,24 @@ if (!Array.prototype.forEach) {
   var Observable = Rx.Observable = (function () {
 
     function Observable(subscribe) {
+      if (Rx.config.longStackSupport && hasStacks) {
+        try {
+          throw new Error();
+        } catch (e) {
+          this.stack = e.stack.substring(e.stack.indexOf("\n") + 1);
+        }
+
+        var self = this;
+        this._subscribe = function (observer) {
+          observer.onError = function (err) {
+            makeStackTraceLong(self, err);
+            observer.onError(err);
+          };
+
+          subscribe(observer);
+        };
+      }
+
       this._subscribe = subscribe;
     }
 
@@ -2134,7 +2264,7 @@ if (!Array.prototype.forEach) {
     var source = this;
     return new AnonymousObservable(function (observer) {
       return source.subscribe(new ObserveOnObserver(scheduler, observer));
-    });
+    }, source);
   };
 
    /**
@@ -2156,7 +2286,7 @@ if (!Array.prototype.forEach) {
         d.setDisposable(new ScheduledDisposable(scheduler, source.subscribe(observer)));
       }));
       return d;
-    });
+    }, source);
   };
 
   /**
@@ -2170,10 +2300,8 @@ if (!Array.prototype.forEach) {
 
       promise.then(
         function (value) {
-          if (!subject.isDisposed) {
-            subject.onNext(value);
-            subject.onCompleted();
-          }
+          subject.onNext(value);
+          subject.onCompleted();
         },
         subject.onError.bind(subject));
 
@@ -2209,36 +2337,34 @@ if (!Array.prototype.forEach) {
   };
 
   /**
-   * Creates a list from an observable sequence.
-   * @returns An observable sequence containing a single element with a list containing all the elements of the source sequence.
+   * Creates an array from an observable sequence.
+   * @returns {Observable} An observable sequence containing a single element with a list containing all the elements of the source sequence.
    */
   observableProto.toArray = function () {
-    var self = this;
+    var source = this;
     return new AnonymousObservable(function(observer) {
       var arr = [];
-      return self.subscribe(
+      return source.subscribe(
         arr.push.bind(arr),
         observer.onError.bind(observer),
         function () {
           observer.onNext(arr);
           observer.onCompleted();
         });
-    });
+    }, source);
   };
 
   /**
    *  Creates an observable sequence from a specified subscribe method implementation.
-   *
    * @example
    *  var res = Rx.Observable.create(function (observer) { return function () { } );
    *  var res = Rx.Observable.create(function (observer) { return Rx.Disposable.empty; } );
    *  var res = Rx.Observable.create(function (observer) { } );
-   *
    * @param {Function} subscribe Implementation of the resulting observable sequence's subscribe method, returning a function that will be wrapped in a Disposable.
    * @returns {Observable} The observable sequence with the specified implementation for the Subscribe method.
    */
-  Observable.create = Observable.createWithDisposable = function (subscribe) {
-    return new AnonymousObservable(subscribe);
+  Observable.create = Observable.createWithDisposable = function (subscribe, parent) {
+    return new AnonymousObservable(subscribe, parent);
   };
 
   /**
@@ -2282,6 +2408,60 @@ if (!Array.prototype.forEach) {
 
   var maxSafeInteger = Math.pow(2, 53) - 1;
 
+  function StringIterable(str) {
+    this._s = s;
+  }
+
+  StringIterable.prototype[$iterator$] = function () {
+    return new StringIterator(this._s);
+  };
+
+  function StringIterator(str) {
+    this._s = s;
+    this._l = s.length;
+    this._i = 0;
+  }
+
+  StringIterator.prototype[$iterator$] = function () {
+    return this;
+  };
+
+  StringIterator.prototype.next = function () {
+    if (this._i < this._l) {
+      var val = this._s.charAt(this._i++);
+      return { done: false, value: val };
+    } else {
+      return doneEnumerator;
+    }
+  };
+
+  function ArrayIterable(a) {
+    this._a = a;
+  }
+
+  ArrayIterable.prototype[$iterator$] = function () {
+    return new ArrayIterator(this._a);
+  };
+
+  function ArrayIterator(a) {
+    this._a = a;
+    this._l = toLength(a);
+    this._i = 0;
+  }
+
+  ArrayIterator.prototype[$iterator$] = function () {
+    return this;
+  };
+
+  ArrayIterator.prototype.next = function () {
+    if (this._i < this._l) {
+      var val = this._a[this._i++];
+      return { done: false, value: val };
+    } else {
+      return doneEnumerator;
+    }
+  };
+
   function numberIsFinite(value) {
     return typeof value === 'number' && root.isFinite(value);
   }
@@ -2290,8 +2470,18 @@ if (!Array.prototype.forEach) {
     return n !== n;
   }
 
-  function isIterable(o) {
-    return o[$iterator$] !== undefined;
+  function getIterable(o) {
+    var i = o[$iterator$], it;
+    if (!i && typeof o === 'string') {
+      it = new StringIterable(o);
+      return it[$iterator$]();
+    }
+    if (!i && o.length !== undefined) {
+      it = new ArrayIterable(o);
+      return it[$iterator$]();
+    }
+    if (!i) { throw new TypeError('Object is not iterable'); }
+    return o[$iterator$]();
   }
 
   function sign(value) {
@@ -2311,10 +2501,6 @@ if (!Array.prototype.forEach) {
     return len;
   }
 
-  function isCallable(f) {
-    return Object.prototype.toString.call(f) === '[object Function]' && typeof f === 'function';
-  }
-
   /**
    * This method creates a new Observable sequence from an array-like or iterable object.
    * @param {Any} arrayLike An array-like or iterable object to convert to an Observable sequence.
@@ -2326,66 +2512,52 @@ if (!Array.prototype.forEach) {
     if (iterable == null) {
       throw new Error('iterable cannot be null.')
     }
-    if (mapFn && !isCallable(mapFn)) {
+    if (mapFn && !isFunction(mapFn)) {
       throw new Error('mapFn when provided must be a function');
     }
     isScheduler(scheduler) || (scheduler = currentThreadScheduler);
+    var list = Object(iterable), it = getIterable(list);
     return new AnonymousObservable(function (observer) {
-      var list = Object(iterable),
-        objIsIterable = isIterable(list),
-        len = objIsIterable ? 0 : toLength(list),
-        it = objIsIterable ? list[$iterator$]() : null,
-        i = 0;
+      var i = 0;
       return scheduler.scheduleRecursive(function (self) {
-        if (i < len || objIsIterable) {
-          var result;
-          if (objIsIterable) {
-            var next;
-            try {
-              next = it.next();
-            } catch (e) {
-              observer.onError(e);
-              return;
-            }
-            if (next.done) {
-              observer.onCompleted();
-              return;
-            }
-
-            result = next.value;
-          } else {
-            result = !!list.charAt ? list.charAt(i) : list[i];
-          }
-
-          if (mapFn && isCallable(mapFn)) {
-            try {
-              result = thisArg ? mapFn.call(thisArg, result, i) : mapFn(result, i);
-            } catch (e) {
-              observer.onError(e);
-              return;
-            }
-          }
-
-          observer.onNext(result);
-          i++;
-          self();
-        } else {
-          observer.onCompleted();
+        var next;
+        try {
+          next = it.next();
+        } catch (e) {
+          observer.onError(e);
+          return;
         }
+        if (next.done) {
+          observer.onCompleted();
+          return;
+        }
+
+        var result = next.value;
+
+        if (mapFn && isFunction(mapFn)) {
+          try {
+            result = mapFn.call(thisArg, result, i);
+          } catch (e) {
+            observer.onError(e);
+            return;
+          }
+        }
+
+        observer.onNext(result);
+        i++;
+        self();
       });
     });
   };
 
   /**
    *  Converts an array to an observable sequence, using an optional scheduler to enumerate the array.
-   *
-   * @example
-   *  var res = Rx.Observable.fromArray([1,2,3]);
-   *  var res = Rx.Observable.fromArray([1,2,3], Rx.Scheduler.timeout);
+   * @deprecated use Observable.from or Observable.of
    * @param {Scheduler} [scheduler] Scheduler to run the enumeration of the input sequence on.
    * @returns {Observable} The observable sequence whose elements are pulled from the given enumerable sequence.
    */
   var observableFromArray = Observable.fromArray = function (array, scheduler) {
+    deprecate('fromArray', 'from');
     isScheduler(scheduler) || (scheduler = currentThreadScheduler);
     return new AnonymousObservable(function (observer) {
       var count = 0, len = array.length;
@@ -2453,29 +2625,36 @@ if (!Array.prototype.forEach) {
     });
   };
 
+  function observableOf (scheduler, array) {
+    isScheduler(scheduler) || (scheduler = currentThreadScheduler);
+    return new AnonymousObservable(function (observer) {
+      var count = 0, len = array.length;
+      return scheduler.scheduleRecursive(function (self) {
+        if (count < len) {
+          observer.onNext(array[count++]);
+          self();
+        } else {
+          observer.onCompleted();
+        }
+      });
+    });
+  }
+
   /**
    *  This method creates a new Observable instance with a variable number of arguments, regardless of number or type of the arguments.
-   * @example
-   *  var res = Rx.Observable.of(1,2,3);
    * @returns {Observable} The observable sequence whose elements are pulled from the given arguments.
    */
   Observable.of = function () {
-    var len = arguments.length, args = new Array(len);
-    for(var i = 0; i < len; i++) { args[i] = arguments[i]; }
-    return observableFromArray(args);
+    return observableOf(null, arguments);
   };
 
   /**
    *  This method creates a new Observable instance with a variable number of arguments, regardless of number or type of the arguments.
-   * @example
-   *  var res = Rx.Observable.of(1,2,3);
    * @param {Scheduler} scheduler A scheduler to use for scheduling the arguments.
    * @returns {Observable} The observable sequence whose elements are pulled from the given arguments.
    */
-  var observableOf = Observable.ofWithScheduler = function (scheduler) {
-    var len = arguments.length - 1, args = new Array(len);
-    for(var i = 0; i < len; i++) { args[i] = arguments[i + 1]; }
-    return observableFromArray(args, scheduler);
+  Observable.ofWithScheduler = function (scheduler) {
+    return observableOf(scheduler, slice.call(arguments, 1));
   };
 
   /**
@@ -2532,7 +2711,7 @@ if (!Array.prototype.forEach) {
    * @param {Scheduler} scheduler Scheduler to send the single element on. If not specified, defaults to Scheduler.immediate.
    * @returns {Observable} An observable sequence containing the single specified element.
    */
-  var observableReturn = Observable['return'] = Observable.returnValue = Observable.just = function (value, scheduler) {
+  var observableReturn = Observable['return'] = Observable.just = function (value, scheduler) {
     isScheduler(scheduler) || (scheduler = immediateScheduler);
     return new AnonymousObservable(function (observer) {
       return scheduler.schedule(function () {
@@ -2540,6 +2719,12 @@ if (!Array.prototype.forEach) {
         observer.onCompleted();
       });
     });
+  };
+
+  /** @deprecated use return or just */
+  Observable.returnValue = function () {
+    deprecate('returnValue', 'return or just');
+    return observableReturn.apply(null, arguments);
   };
 
   /**
@@ -2684,7 +2869,7 @@ if (!Array.prototype.forEach) {
       }, observer.onCompleted.bind(observer)));
 
       return subscription;
-    });
+    }, source);
   }
 
   /**
@@ -2695,10 +2880,18 @@ if (!Array.prototype.forEach) {
    * @param {Mixed} handlerOrSecond Exception handler function that returns an observable sequence given the error that occurred in the first sequence, or a second observable sequence used to produce results when an error occurred in the first sequence.
    * @returns {Observable} An observable sequence containing the first sequence's elements, followed by the elements of the handler sequence in case an exception occurred.
    */
-  observableProto['catch'] = observableProto.catchError = observableProto.catchException = function (handlerOrSecond) {
+  observableProto['catch'] = observableProto.catchError = function (handlerOrSecond) {
     return typeof handlerOrSecond === 'function' ?
       observableCatchHandler(this, handlerOrSecond) :
       observableCatch([this, handlerOrSecond]);
+  };
+
+  /**
+   * @deprecated use #catch or #catchError instead.
+   */
+  observableProto.catchException = function (handlerOrSecond) {
+    deprecate('catchException', 'catch or catchError');
+    return this.catchError(handlerOrSecond);
   };
 
   /**
@@ -2706,8 +2899,16 @@ if (!Array.prototype.forEach) {
    * @param {Array | Arguments} args Arguments or an array to use as the next sequence if an error occurs.
    * @returns {Observable} An observable sequence containing elements from consecutive source sequences until a source sequence terminates successfully.
    */
-  var observableCatch = Observable.catchException = Observable.catchError = Observable['catch'] = function () {
-    return enumerableOf(argsOrArray(arguments, 0)).catchException();
+  var observableCatch = Observable.catchError = Observable['catch'] = function () {
+    return enumerableOf(argsOrArray(arguments, 0)).catchError();
+  };
+
+  /**
+   * @deprecated use #catch or #catchError instead.
+   */
+  Observable.catchException = function () {
+    deprecate('catchException', 'catch or catchError');
+    return observableCatch.apply(null, arguments);
   };
 
   /**
@@ -2791,7 +2992,7 @@ if (!Array.prototype.forEach) {
       }
 
       return new CompositeDisposable(subscriptions);
-    });
+    }, this);
   };
 
     /**
@@ -2817,13 +3018,19 @@ if (!Array.prototype.forEach) {
     return enumerableOf(argsOrArray(arguments, 0)).concat();
   };
 
-    /**
-     * Concatenates an observable sequence of observable sequences.
-     * @returns {Observable} An observable sequence that contains the elements of each observed inner sequence, in sequential order.
-     */
-    observableProto.concatObservable = observableProto.concatAll =function () {
-        return this.merge(1);
-    };
+  /**
+   * Concatenates an observable sequence of observable sequences.
+   * @returns {Observable} An observable sequence that contains the elements of each observed inner sequence, in sequential order.
+   */
+  observableProto.concatAll = function () {
+    return this.merge(1);
+  };
+
+  /** @deprecated Use `concatAll` instead. */
+  observableProto.concatObservable = function () {
+    deprecate('concatObservable', 'concatAll');
+    return this.merge(1);
+  };
 
   /**
    * Merges an observable sequence of observable sequences into an observable sequence, limiting the number of concurrent subscriptions to inner sequences.
@@ -2870,43 +3077,37 @@ if (!Array.prototype.forEach) {
         activeCount === 0 && observer.onCompleted();
       }));
       return group;
-    });
+    }, sources);
   };
 
-    /**
-     * Merges all the observable sequences into a single observable sequence.
-     * The scheduler is optional and if not specified, the immediate scheduler is used.
-     *
-     * @example
-     * 1 - merged = Rx.Observable.merge(xs, ys, zs);
-     * 2 - merged = Rx.Observable.merge([xs, ys, zs]);
-     * 3 - merged = Rx.Observable.merge(scheduler, xs, ys, zs);
-     * 4 - merged = Rx.Observable.merge(scheduler, [xs, ys, zs]);
-     * @returns {Observable} The observable sequence that merges the elements of the observable sequences.
-     */
-    var observableMerge = Observable.merge = function () {
-        var scheduler, sources;
-        if (!arguments[0]) {
-            scheduler = immediateScheduler;
-            sources = slice.call(arguments, 1);
-        } else if (arguments[0].now) {
-            scheduler = arguments[0];
-            sources = slice.call(arguments, 1);
-        } else {
-            scheduler = immediateScheduler;
-            sources = slice.call(arguments, 0);
-        }
-        if (Array.isArray(sources[0])) {
-            sources = sources[0];
-        }
-        return observableFromArray(sources, scheduler).mergeObservable();
-    };
+  /**
+   * Merges all the observable sequences into a single observable sequence.
+   * The scheduler is optional and if not specified, the immediate scheduler is used.
+   * @returns {Observable} The observable sequence that merges the elements of the observable sequences.
+   */
+  var observableMerge = Observable.merge = function () {
+    var scheduler, sources;
+    if (!arguments[0]) {
+      scheduler = immediateScheduler;
+      sources = slice.call(arguments, 1);
+    } else if (isScheduler(arguments[0])) {
+      scheduler = arguments[0];
+      sources = slice.call(arguments, 1);
+    } else {
+      scheduler = immediateScheduler;
+      sources = slice.call(arguments, 0);
+    }
+    if (Array.isArray(sources[0])) {
+      sources = sources[0];
+    }
+    return observableOf(scheduler, sources).mergeAll();
+  };
 
   /**
    * Merges an observable sequence of observable sequences into an observable sequence.
    * @returns {Observable} The observable sequence that merges the elements of the inner sequences.
    */
-  observableProto.mergeObservable = observableProto.mergeAll = function () {
+  observableProto.mergeAll = function () {
     var sources = this;
     return new AnonymousObservable(function (observer) {
       var group = new CompositeDisposable(),
@@ -2930,7 +3131,15 @@ if (!Array.prototype.forEach) {
         group.length === 1 && observer.onCompleted();
       }));
       return group;
-    });
+    }, sources);
+  };
+
+  /**
+   * @deprecated use #mergeAll instead.
+   */
+  observableProto.mergeObservable = function () {
+    deprecate('mergeObservable', 'mergeAll');
+    return this.mergeAll.apply(this, arguments);
   };
 
   /**
@@ -2998,7 +3207,7 @@ if (!Array.prototype.forEach) {
       }));
 
       return disposables;
-    });
+    }, source);
   };
 
   /**
@@ -3037,7 +3246,7 @@ if (!Array.prototype.forEach) {
             !hasLatest && observer.onCompleted();
           });
       return new CompositeDisposable(subscription, innerSubscription);
-    });
+    }, sources);
   };
 
   /**
@@ -3053,7 +3262,7 @@ if (!Array.prototype.forEach) {
         source.subscribe(observer),
         other.subscribe(observer.onCompleted.bind(observer), observer.onError.bind(observer), noop)
       );
-    });
+    }, source);
   };
 
   function zipArray(second, resultSelector) {
@@ -3074,7 +3283,7 @@ if (!Array.prototype.forEach) {
           observer.onCompleted();
         }
       }, observer.onError.bind(observer), observer.onCompleted.bind(observer));
-    });
+    }, first);
   }
 
   /**
@@ -3136,7 +3345,7 @@ if (!Array.prototype.forEach) {
       }
 
       return new CompositeDisposable(subscriptions);
-    });
+    }, parent);
   };
 
   /**
@@ -3206,7 +3415,7 @@ if (!Array.prototype.forEach) {
    * @returns {Observable} An observable sequence that hides the identity of the source sequence.
    */
   observableProto.asObservable = function () {
-    return new AnonymousObservable(this.subscribe.bind(this));
+    return new AnonymousObservable(this.subscribe.bind(this), this);
   };
 
   /**
@@ -3230,60 +3439,58 @@ if (!Array.prototype.forEach) {
     });
   };
 
-    /**
-     * Dematerializes the explicit notification values of an observable sequence as implicit notifications.
-     * @returns {Observable} An observable sequence exhibiting the behavior corresponding to the source sequence's notification values.
-     */
-    observableProto.dematerialize = function () {
-        var source = this;
-        return new AnonymousObservable(function (observer) {
-            return source.subscribe(function (x) {
-                return x.accept(observer);
-            }, observer.onError.bind(observer), observer.onCompleted.bind(observer));
-        });
-    };
+  /**
+   * Dematerializes the explicit notification values of an observable sequence as implicit notifications.
+   * @returns {Observable} An observable sequence exhibiting the behavior corresponding to the source sequence's notification values.
+   */
+  observableProto.dematerialize = function () {
+    var source = this;
+    return new AnonymousObservable(function (observer) {
+      return source.subscribe(function (x) { return x.accept(observer); }, observer.onError.bind(observer), observer.onCompleted.bind(observer));
+    }, this);
+  };
 
-    /**
-     *  Returns an observable sequence that contains only distinct contiguous elements according to the keySelector and the comparer.
-     *
-     *  var obs = observable.distinctUntilChanged();
-     *  var obs = observable.distinctUntilChanged(function (x) { return x.id; });
-     *  var obs = observable.distinctUntilChanged(function (x) { return x.id; }, function (x, y) { return x === y; });
-     *
-     * @param {Function} [keySelector] A function to compute the comparison key for each element. If not provided, it projects the value.
-     * @param {Function} [comparer] Equality comparer for computed key values. If not provided, defaults to an equality comparer function.
-     * @returns {Observable} An observable sequence only containing the distinct contiguous elements, based on a computed key value, from the source sequence.
-     */
-    observableProto.distinctUntilChanged = function (keySelector, comparer) {
-        var source = this;
-        keySelector || (keySelector = identity);
-        comparer || (comparer = defaultComparer);
-        return new AnonymousObservable(function (observer) {
-            var hasCurrentKey = false, currentKey;
-            return source.subscribe(function (value) {
-                var comparerEquals = false, key;
-                try {
-                    key = keySelector(value);
-                } catch (exception) {
-                    observer.onError(exception);
-                    return;
-                }
-                if (hasCurrentKey) {
-                    try {
-                        comparerEquals = comparer(currentKey, key);
-                    } catch (exception) {
-                        observer.onError(exception);
-                        return;
-                    }
-                }
-                if (!hasCurrentKey || !comparerEquals) {
-                    hasCurrentKey = true;
-                    currentKey = key;
-                    observer.onNext(value);
-                }
-            }, observer.onError.bind(observer), observer.onCompleted.bind(observer));
-        });
-    };
+  /**
+   *  Returns an observable sequence that contains only distinct contiguous elements according to the keySelector and the comparer.
+   *
+   *  var obs = observable.distinctUntilChanged();
+   *  var obs = observable.distinctUntilChanged(function (x) { return x.id; });
+   *  var obs = observable.distinctUntilChanged(function (x) { return x.id; }, function (x, y) { return x === y; });
+   *
+   * @param {Function} [keySelector] A function to compute the comparison key for each element. If not provided, it projects the value.
+   * @param {Function} [comparer] Equality comparer for computed key values. If not provided, defaults to an equality comparer function.
+   * @returns {Observable} An observable sequence only containing the distinct contiguous elements, based on a computed key value, from the source sequence.
+   */
+  observableProto.distinctUntilChanged = function (keySelector, comparer) {
+    var source = this;
+    keySelector || (keySelector = identity);
+    comparer || (comparer = defaultComparer);
+    return new AnonymousObservable(function (observer) {
+      var hasCurrentKey = false, currentKey;
+      return source.subscribe(function (value) {
+          var comparerEquals = false, key;
+          try {
+            key = keySelector(value);
+          } catch (e) {
+            observer.onError(e);
+            return;
+          }
+          if (hasCurrentKey) {
+            try {
+              comparerEquals = comparer(currentKey, key);
+            } catch (e) {
+              observer.onError(e);
+              return;
+            }
+          }
+          if (!hasCurrentKey || !comparerEquals) {
+            hasCurrentKey = true;
+            currentKey = key;
+            observer.onNext(value);
+          }
+      }, observer.onError.bind(observer), observer.onCompleted.bind(observer));
+    }, this);
+  };
 
   /**
    *  Invokes an action for each element in the observable sequence and invokes an action upon graceful or exceptional termination of the observable sequence.
@@ -3293,7 +3500,7 @@ if (!Array.prototype.forEach) {
    * @param {Function} [onCompleted]  Action to invoke upon graceful termination of the observable sequence. Used if only the observerOrOnNext parameter is also a function.
    * @returns {Observable} The source sequence with the side-effecting behavior applied.
    */
-  observableProto['do'] = observableProto.doAction = observableProto.tap = function (observerOrOnNext, onError, onCompleted) {
+  observableProto['do'] = observableProto.tap = function (observerOrOnNext, onError, onCompleted) {
     var source = this, onNextFunc;
     if (typeof observerOrOnNext === 'function') {
       onNextFunc = observerOrOnNext;
@@ -3329,7 +3536,13 @@ if (!Array.prototype.forEach) {
         }
         observer.onCompleted();
       });
-    });
+    }, this);
+  };
+
+  /** @deprecated use #do or #tap instead. */
+  observableProto.doAction = function () {
+    deprecate('doAction', 'do or tap');
+    return this.tap.apply(this, arguments);
   };
 
   /**
@@ -3367,13 +3580,10 @@ if (!Array.prototype.forEach) {
 
   /**
    *  Invokes a specified action after the source observable sequence terminates gracefully or exceptionally.
-   *
-   * @example
-   *  var res = observable.finallyAction(function () { console.log('sequence ended'; });
    * @param {Function} finallyAction Action to invoke after the source observable sequence terminates.
    * @returns {Observable} Source sequence with the action-invoking termination behavior applied.
    */
-  observableProto['finally'] = observableProto.finallyAction = function (action) {
+  observableProto['finally'] = observableProto.ensure = function (action) {
     var source = this;
     return new AnonymousObservable(function (observer) {
       var subscription;
@@ -3392,7 +3602,15 @@ if (!Array.prototype.forEach) {
           action();
         }
       });
-    });
+    }, this);
+  };
+
+  /**
+   * @deprecated use #finally or #ensure instead.
+   */
+  observableProto.finallyAction = function (action) {
+    deprecate('finallyAction', 'finally or ensure');
+    return this.ensure(action);
   };
 
   /**
@@ -3403,7 +3621,7 @@ if (!Array.prototype.forEach) {
     var source = this;
     return new AnonymousObservable(function (observer) {
       return source.subscribe(noop, observer.onError.bind(observer), observer.onCompleted.bind(observer));
-    });
+    }, source);
   };
 
   /**
@@ -3422,21 +3640,17 @@ if (!Array.prototype.forEach) {
         observer.onNext(notificationCreateOnCompleted());
         observer.onCompleted();
       });
-    });
+    }, source);
   };
 
-    /**
-     *  Repeats the observable sequence a specified number of times. If the repeat count is not specified, the sequence repeats indefinitely.
-     *
-     * @example
-     *  var res = repeated = source.repeat();
-     *  var res = repeated = source.repeat(42);
-     * @param {Number} [repeatCount]  Number of times to repeat the sequence. If not provided, repeats the sequence indefinitely.
-     * @returns {Observable} The observable sequence producing the elements of the given sequence repeatedly.
-     */
-    observableProto.repeat = function (repeatCount) {
-        return enumerableRepeat(this, repeatCount).concat();
-    };
+  /**
+   *  Repeats the observable sequence a specified number of times. If the repeat count is not specified, the sequence repeats indefinitely.
+   * @param {Number} [repeatCount]  Number of times to repeat the sequence. If not provided, repeats the sequence indefinitely.
+   * @returns {Observable} The observable sequence producing the elements of the given sequence repeatedly.
+   */
+  observableProto.repeat = function (repeatCount) {
+    return enumerableRepeat(this, repeatCount).concat();
+  };
 
   /**
    *  Repeats the source observable sequence the specified number of times or until it successfully terminates. If the retry count is not specified, it retries indefinitely.
@@ -3449,7 +3663,7 @@ if (!Array.prototype.forEach) {
    * @returns {Observable} An observable sequence producing the elements of the given sequence repeatedly until it terminates successfully.
    */
   observableProto.retry = function (retryCount) {
-    return enumerableRepeat(this, retryCount).catchException();
+    return enumerableRepeat(this, retryCount).catchError();
   };
 
   /**
@@ -3496,7 +3710,7 @@ if (!Array.prototype.forEach) {
           observer.onCompleted();
         }
       );
-    });
+    }, source);
   };
 
   /**
@@ -3515,7 +3729,7 @@ if (!Array.prototype.forEach) {
         q.push(x);
         q.length > count && observer.onNext(q.shift());
       }, observer.onError.bind(observer), observer.onCompleted.bind(observer));
-    });
+    }, source);
   };
 
   /**
@@ -3554,10 +3768,10 @@ if (!Array.prototype.forEach) {
         q.push(x);
         q.length > count && q.shift();
       }, observer.onError.bind(observer), function () {
-        while(q.length > 0) { observer.onNext(q.shift()); }
+        while (q.length > 0) { observer.onNext(q.shift()); }
         observer.onCompleted();
       });
-    });
+    }, source);
   };
 
   /**
@@ -3580,7 +3794,7 @@ if (!Array.prototype.forEach) {
         observer.onNext(q);
         observer.onCompleted();
       });
-    });
+    }, source);
   };
 
   /**
@@ -3620,27 +3834,27 @@ if (!Array.prototype.forEach) {
         function (x) {
           for (var i = 0, len = q.length; i < len; i++) { q[i].onNext(x); }
           var c = n - count + 1;
-          c >=0 && c % skip === 0 && q.shift().onCompleted();
+          c >= 0 && c % skip === 0 && q.shift().onCompleted();
           ++n % skip === 0 && createWindow();
-        }, 
+        },
         function (e) {
           while (q.length > 0) { q.shift().onError(e); }
           observer.onError(e);
-        }, 
+        },
         function () {
           while (q.length > 0) { q.shift().onCompleted(); }
           observer.onCompleted();
         }
       ));
       return refCountDisposable;
-    });
+    }, source);
   };
 
   function concatMap(source, selector, thisArg) {
     return source.map(function (x, i) {
       var result = selector.call(thisArg, x, i, source);
       isPromise(result) && (result = observableFromPromise(result));
-      (Array.isArray(result) || isIterable(result)) && (result = observableFrom(result));
+      (isArrayLike(result) || isIterable(result)) && (result = observableFrom(result));
       return result;
     }).concatAll();
   }
@@ -3665,18 +3879,18 @@ if (!Array.prototype.forEach) {
    * @returns {Observable} An observable sequence whose elements are the result of invoking the one-to-many transform function collectionSelector on each element of the input sequence and then mapping each of those sequence elements and their corresponding source element to a result element.
    */
   observableProto.selectConcat = observableProto.concatMap = function (selector, resultSelector, thisArg) {
-    if (typeof selector === 'function' && typeof resultSelector === 'function') {
+    if (isFunction(selector) && isFunction(resultSelector)) {
       return this.concatMap(function (x, i) {
         var selectorResult = selector(x, i);
         isPromise(selectorResult) && (selectorResult = observableFromPromise(selectorResult));
-        (Array.isArray(selectorResult) || isIterable(selectorResult)) && (selectorResult = observableFrom(selectorResult));
+        (isArrayLike(selectorResult) || isIterable(selectorResult)) && (selectorResult = observableFrom(selectorResult));
 
         return selectorResult.map(function (y, i2) {
           return resultSelector(x, y, i, i2);
         });
       });
     }
-    return typeof selector === 'function' ?
+    return isFunction(selector) ?
       concatMap(this, selector, thisArg) :
       concatMap(this, function () { return selector; });
   };
@@ -3730,7 +3944,7 @@ if (!Array.prototype.forEach) {
           observer.onNext(result);
           observer.onCompleted();
         });
-    }).concatAll();
+    }, this).concatAll();
   };
 
     /**
@@ -3744,22 +3958,18 @@ if (!Array.prototype.forEach) {
      * @returns {Observable} An observable sequence that contains the specified default value if the source is empty; otherwise, the elements of the source itself.
      */
     observableProto.defaultIfEmpty = function (defaultValue) {
-        var source = this;
-        if (defaultValue === undefined) {
-            defaultValue = null;
-        }
-        return new AnonymousObservable(function (observer) {
-            var found = false;
-            return source.subscribe(function (x) {
-                found = true;
-                observer.onNext(x);
-            }, observer.onError.bind(observer), function () {
-                if (!found) {
-                    observer.onNext(defaultValue);
-                }
-                observer.onCompleted();
-            });
+      var source = this;
+      defaultValue === undefined && (defaultValue = null);
+      return new AnonymousObservable(function (observer) {
+        var found = false;
+        return source.subscribe(function (x) {
+          found = true;
+          observer.onNext(x);
+        }, observer.onError.bind(observer), function () {
+          !found && observer.onNext(defaultValue);
+          observer.onCompleted();
         });
+      }, this);
     };
 
   // Swap out for Array.findIndex
@@ -3812,30 +4022,31 @@ if (!Array.prototype.forEach) {
       },
       observer.onError.bind(observer),
       observer.onCompleted.bind(observer));
-    });
+    }, this);
   };
 
   /**
-   *  Projects each element of an observable sequence into a new form by incorporating the element's index.
+   * Projects each element of an observable sequence into a new form by incorporating the element's index.
    * @param {Function} selector A transform function to apply to each source element; the second parameter of the function represents the index of the source element.
    * @param {Any} [thisArg] Object to use as this when executing callback.
    * @returns {Observable} An observable sequence whose elements are the result of invoking the transform function on each element of source.
    */
   observableProto.select = observableProto.map = function (selector, thisArg) {
-    var parent = this;
+    var selectorFn = isFunction(selector) ? selector : function () { return selector; },
+        source = this;
     return new AnonymousObservable(function (observer) {
       var count = 0;
-      return parent.subscribe(function (value) {
+      return source.subscribe(function (value) {
         var result;
         try {
-          result = selector.call(thisArg, value, count++, parent);
+          result = selectorFn.call(thisArg, value, count++, source);
         } catch (e) {
           observer.onError(e);
           return;
         }
         observer.onNext(result);
       }, observer.onError.bind(observer), observer.onCompleted.bind(observer));
-    });
+    }, source);
   };
 
   /**
@@ -3851,9 +4062,9 @@ if (!Array.prototype.forEach) {
     return source.map(function (x, i) {
       var result = selector.call(thisArg, x, i, source);
       isPromise(result) && (result = observableFromPromise(result));
-      (Array.isArray(result) || isIterable(result)) && (result = observableFrom(result));
+      (isArrayLike(result) || isIterable(result)) && (result = observableFrom(result));
       return result;
-    }).mergeObservable();
+    }).mergeAll();
   }
 
   /**
@@ -3876,18 +4087,18 @@ if (!Array.prototype.forEach) {
    * @returns {Observable} An observable sequence whose elements are the result of invoking the one-to-many transform function collectionSelector on each element of the input sequence and then mapping each of those sequence elements and their corresponding source element to a result element.
    */
   observableProto.selectMany = observableProto.flatMap = function (selector, resultSelector, thisArg) {
-    if (typeof selector === 'function' && typeof resultSelector === 'function') {
+    if (isFunction(selector) && isFunction(resultSelector)) {
       return this.flatMap(function (x, i) {
         var selectorResult = selector(x, i);
         isPromise(selectorResult) && (selectorResult = observableFromPromise(selectorResult));
-        (Array.isArray(selectorResult) || isIterable(selectorResult)) && (selectorResult = observableFrom(selectorResult));
+        (isArrayLike(selectorResult) || isIterable(selectorResult)) && (selectorResult = observableFrom(selectorResult));
 
         return selectorResult.map(function (y, i2) {
           return resultSelector(x, y, i, i2);
         });
       }, thisArg);
     }
-    return typeof selector === 'function' ?
+    return isFunction(selector) ?
       flatMap(this, selector, thisArg) :
       flatMap(this, function () { return selector; });
   };
@@ -3941,7 +4152,7 @@ if (!Array.prototype.forEach) {
           observer.onNext(result);
           observer.onCompleted();
         });
-    }).mergeAll();
+    }, source).mergeAll();
   };
 
   /**
@@ -3962,18 +4173,18 @@ if (!Array.prototype.forEach) {
    * @returns {Observable} An observable sequence that contains the elements that occur after the specified index in the input sequence.
    */
   observableProto.skip = function (count) {
-      if (count < 0) { throw new Error(argumentOutOfRange); }
-      var source = this;
-      return new AnonymousObservable(function (observer) {
-        var remaining = count;
-        return source.subscribe(function (x) {
-          if (remaining <= 0) {
-            observer.onNext(x);
-          } else {
-            remaining--;
-          }
-        }, observer.onError.bind(observer), observer.onCompleted.bind(observer));
-      });
+    if (count < 0) { throw new Error(argumentOutOfRange); }
+    var source = this;
+    return new AnonymousObservable(function (observer) {
+      var remaining = count;
+      return source.subscribe(function (x) {
+        if (remaining <= 0) {
+          observer.onNext(x);
+        } else {
+          remaining--;
+        }
+      }, observer.onError.bind(observer), observer.onCompleted.bind(observer));
+    }, source);
   };
 
   /**
@@ -4001,7 +4212,7 @@ if (!Array.prototype.forEach) {
         }
         running && observer.onNext(x);
       }, observer.onError.bind(observer), observer.onCompleted.bind(observer));
-    });
+    }, source);
   };
 
   /**
@@ -4014,18 +4225,18 @@ if (!Array.prototype.forEach) {
    * @returns {Observable} An observable sequence that contains the specified number of elements from the start of the input sequence.
    */
   observableProto.take = function (count, scheduler) {
-      if (count < 0) { throw new RangeError(argumentOutOfRange); }
-      if (count === 0) { return observableEmpty(scheduler); }
-      var observable = this;
-      return new AnonymousObservable(function (observer) {
-        var remaining = count;
-        return observable.subscribe(function (x) {
-          if (remaining-- > 0) {
-            observer.onNext(x);
-            remaining === 0 && observer.onCompleted();
-          }
-        }, observer.onError.bind(observer), observer.onCompleted.bind(observer));
-      });
+    if (count < 0) { throw new RangeError(argumentOutOfRange); }
+    if (count === 0) { return observableEmpty(scheduler); }
+    var source = this;
+    return new AnonymousObservable(function (observer) {
+      var remaining = count;
+      return source.subscribe(function (x) {
+        if (remaining-- > 0) {
+          observer.onNext(x);
+          remaining === 0 && observer.onCompleted();
+        }
+      }, observer.onError.bind(observer), observer.onCompleted.bind(observer));
+    }, source);
   };
 
   /**
@@ -4036,13 +4247,13 @@ if (!Array.prototype.forEach) {
    * @returns {Observable} An observable sequence that contains the elements from the input sequence that occur before the element at which the test no longer passes.
    */
   observableProto.takeWhile = function (predicate, thisArg) {
-    var observable = this;
+    var source = this;
     return new AnonymousObservable(function (observer) {
       var i = 0, running = true;
-      return observable.subscribe(function (x) {
+      return source.subscribe(function (x) {
         if (running) {
           try {
-            running = predicate.call(thisArg, x, i++, observable);
+            running = predicate.call(thisArg, x, i++, source);
           } catch (e) {
             observer.onError(e);
             return;
@@ -4054,7 +4265,7 @@ if (!Array.prototype.forEach) {
           }
         }
       }, observer.onError.bind(observer), observer.onCompleted.bind(observer));
-    });
+    }, source);
   };
 
   /**
@@ -4068,24 +4279,24 @@ if (!Array.prototype.forEach) {
    * @returns {Observable} An observable sequence that contains elements from the input sequence that satisfy the condition.
    */
   observableProto.where = observableProto.filter = function (predicate, thisArg) {
-      var parent = this;
-      return new AnonymousObservable(function (observer) {
-        var count = 0;
-        return parent.subscribe(function (value) {
-          var shouldRun;
-          try {
-            shouldRun = predicate.call(thisArg, value, count++, parent);
-          } catch (e) {
-            observer.onError(e);
-            return;
-          }
-          shouldRun && observer.onNext(value);
-        }, observer.onError.bind(observer), observer.onCompleted.bind(observer));
-      });
+    var source = this;
+    return new AnonymousObservable(function (observer) {
+      var count = 0;
+      return source.subscribe(function (value) {
+        var shouldRun;
+        try {
+          shouldRun = predicate.call(thisArg, value, count++, parent);
+        } catch (e) {
+          observer.onError(e);
+          return;
+        }
+        shouldRun && observer.onNext(value);
+      }, observer.onError.bind(observer), observer.onCompleted.bind(observer));
+    }, source);
   };
 
   /**
-   * Executes a transducer to transform the observable sequence 
+   * Executes a transducer to transform the observable sequence
    * @param {Transducer} transducer A transducer to execute
    * @returns {Observable} An Observable sequence containing the results from the transducer.
    */
@@ -4109,17 +4320,17 @@ if (!Array.prototype.forEach) {
     return new AnonymousObservable(function(observer) {
       var xform = transducer(transformForObserver(observer));
       return source.subscribe(
-        function(v) { 
+        function(v) {
           try {
             xform.step(observer, v);
           } catch (e) {
             observer.onError(e);
           }
-        }, 
-        observer.onError.bind(observer), 
+        },
+        observer.onError.bind(observer),
         function() { xform.result(observer); }
       );
-    });
+    }, source);
   };
 
   var AnonymousObservable = Rx.AnonymousObservable = (function (__super__) {
@@ -4134,7 +4345,8 @@ if (!Array.prototype.forEach) {
         disposableEmpty;
     }
 
-    function AnonymousObservable(subscribe) {
+    function AnonymousObservable(subscribe, parent) {
+      this.source = parent;
       if (!(this instanceof AnonymousObservable)) {
         return new AnonymousObservable(subscribe);
       }
@@ -4167,66 +4379,59 @@ if (!Array.prototype.forEach) {
 
   }(Observable));
 
-    /** @private */
-    var AutoDetachObserver = (function (_super) {
-        inherits(AutoDetachObserver, _super);
+  var AutoDetachObserver = (function (__super__) {
+    inherits(AutoDetachObserver, __super__);
 
-        function AutoDetachObserver(observer) {
-            _super.call(this);
-            this.observer = observer;
-            this.m = new SingleAssignmentDisposable();
-        }
+    function AutoDetachObserver(observer) {
+      __super__.call(this);
+      this.observer = observer;
+      this.m = new SingleAssignmentDisposable();
+    }
 
-        var AutoDetachObserverPrototype = AutoDetachObserver.prototype;
+    var AutoDetachObserverPrototype = AutoDetachObserver.prototype;
 
-        AutoDetachObserverPrototype.next = function (value) {
-            var noError = false;
-            try {
-                this.observer.onNext(value);
-                noError = true;
-            } catch (e) {
-                throw e;
-            } finally {
-                if (!noError) {
-                    this.dispose();
-                }
-            }
-        };
+    AutoDetachObserverPrototype.next = function (value) {
+      var noError = false;
+      try {
+        this.observer.onNext(value);
+        noError = true;
+      } catch (e) {
+        throw e;
+      } finally {
+        !noError && this.dispose();
+      }
+    };
 
-        AutoDetachObserverPrototype.error = function (exn) {
-            try {
-                this.observer.onError(exn);
-            } catch (e) {
-                throw e;
-            } finally {
-                this.dispose();
-            }
-        };
+    AutoDetachObserverPrototype.error = function (err) {
+      try {
+        this.observer.onError(err);
+      } catch (e) {
+        throw e;
+      } finally {
+        this.dispose();
+      }
+    };
 
-        AutoDetachObserverPrototype.completed = function () {
-            try {
-                this.observer.onCompleted();
-            } catch (e) {
-                throw e;
-            } finally {
-                this.dispose();
-            }
-        };
+    AutoDetachObserverPrototype.completed = function () {
+      try {
+        this.observer.onCompleted();
+      } catch (e) {
+        throw e;
+      } finally {
+        this.dispose();
+      }
+    };
 
-        AutoDetachObserverPrototype.setDisposable = function (value) { this.m.setDisposable(value); };
-        AutoDetachObserverPrototype.getDisposable = function (value) { return this.m.getDisposable(); };
-        /* @private */
-        AutoDetachObserverPrototype.disposable = function (value) {
-            return arguments.length ? this.getDisposable() : setDisposable(value);
-        };
+    AutoDetachObserverPrototype.setDisposable = function (value) { this.m.setDisposable(value); };
+    AutoDetachObserverPrototype.getDisposable = function () { return this.m.getDisposable(); };
 
-        AutoDetachObserverPrototype.dispose = function () {
-            _super.prototype.dispose.call(this);
-            this.m.dispose();
-        };
+    AutoDetachObserverPrototype.dispose = function () {
+      __super__.prototype.dispose.call(this);
+      this.m.dispose();
+    };
 
-        return AutoDetachObserver;
-    }(AbstractObserver));
+    return AutoDetachObserver;
+  }(AbstractObserver));
 
     /** @private */
     var InnerSubscription = function (subject, observer) {
@@ -4519,5 +4724,8 @@ if (!Array.prototype.forEach) {
         // in a browser or Rhino
         root.Rx = Rx;
     }
+
+  // All code before this point will be filtered from stack traces.
+  var rEndingLine = captureLine();
 
 }.call(this));
