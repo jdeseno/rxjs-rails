@@ -122,8 +122,6 @@
     }
     var fileName = fileNameAndLineNumber[0], lineNumber = fileNameAndLineNumber[1];
 
-    console.log(rFileName, rStartingLine, rEndingLine);
-
     return fileName === rFileName &&
       lineNumber >= rStartingLine &&
       lineNumber <= rEndingLine;
@@ -210,6 +208,14 @@
     objectProto = Object.prototype,
     stringProto = String.prototype,
     propertyIsEnumerable = objectProto.propertyIsEnumerable;
+
+  // Fix for Tessel
+  if (!propertyIsEnumerable) {
+    propertyIsEnumerable = objectProto.propertyIsEnumerable = function (key) {
+      for (var k in this) { if (k === key) { return true; } }
+      return false;
+    };
+  }
 
   try {
     supportNodeClass = !(toString.call(document) == objectClass && !({ 'toString': 0 } + ''));
@@ -2040,16 +2046,18 @@
 
         var self = this;
         this._subscribe = function (observer) {
+          var oldOnError = observer.onError.bind(observer);
+
           observer.onError = function (err) {
-            makeStackTraceLong(self, err);
-            observer.onError(err);
+            makeStackTraceLong(err, self);
+            oldOnError(err);
           };
 
-          subscribe(observer);
+          return subscribe(observer);
         };
+      } else {
+        this._subscribe = subscribe;
       }
-
-      this._subscribe = subscribe;
     }
 
     observableProto = Observable.prototype;
@@ -4134,7 +4142,7 @@
       return source.subscribe(function (value) {
         var shouldRun;
         try {
-          shouldRun = predicate.call(thisArg, value, count++, parent);
+          shouldRun = predicate.call(thisArg, value, count++, source);
         } catch (e) {
           observer.onError(e);
           return;
