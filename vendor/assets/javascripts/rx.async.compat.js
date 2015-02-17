@@ -48,7 +48,8 @@
     slice = Array.prototype.slice;
 
   var fnString = 'function',
-      throwString = 'throw';
+      throwString = 'throw',
+      isObject = Rx.internals.isObject;
 
   function toThunk(obj, ctx) {
     if (Array.isArray(obj)) {  return objectToThunk.call(ctx, obj); }
@@ -144,10 +145,6 @@
     return obj && typeof obj.next === fnString && typeof obj[throwString] === fnString;
   }
 
-  function isObject(val) {
-    return val && val.constructor === Object;
-  }
-
   /*
    * Spawns a generator function which allows for Promises, Observable sequences, Arrays, Objects, Generators and functions.
    * @param {Function} The spawning function.
@@ -161,14 +158,14 @@
         gen = fn;
 
       if (isGenFun) {
-        var args = slice.call(arguments),
-          len = args.length,
+        for(var args = [], i = 0, len = arguments.length; i < len; i++) { args.push(arguments[i]); }
+        var len = args.length,
           hasCallback = len && typeof args[len - 1] === fnString;
 
-        done = hasCallback ? args.pop() : error;
+        done = hasCallback ? args.pop() : handleError;
         gen = fn.apply(this, args);
       } else {
-        done = done || error;
+        done = done || handleError;
       }
 
       next();
@@ -182,7 +179,7 @@
 
         // multiple args
         if (arguments.length > 2) {
-          res = slice.call(arguments, 1);
+          for(var res = [], i = 1, len = arguments.length; i < len; i++) { res.push(arguments[i]); }
         }
 
         if (err) {
@@ -237,41 +234,7 @@
     }
   };
 
-  /**
-   * Takes a function with a callback and turns it into a thunk.
-   * @param {Function} A function with a callback such as fs.readFile
-   * @returns {Function} A function, when executed will continue the state machine.
-   */
-  Rx.denodify = function (fn) {
-    return function () {
-      var args = slice.call(arguments),
-        results,
-        called,
-        callback;
-
-      args.push(function() {
-        results = arguments;
-
-        if (callback && !called) {
-          called = true;
-          cb.apply(this, results);
-        }
-      });
-
-      fn.apply(this, args);
-
-      return function (fn) {
-        callback = fn;
-
-        if (results && !called) {
-          called = true;
-          fn.apply(this, results);
-        }
-      }
-    }
-  };
-
-  function error(err) {
+  function handleError(err) {
     if (!err) { return; }
     timeoutScheduler.schedule(function() {
       throw err;
@@ -337,7 +300,7 @@
    */
   Observable.fromCallback = function (func, context, selector) {
     return function () {
-      var args = slice.call(arguments, 0);
+      for(var args = [], i = 0, len = arguments.length; i < len; i++) { args.push(arguments[i]); }
 
       return new AnonymousObservable(function (observer) {
         function handler() {
@@ -347,8 +310,7 @@
             try {
               results = selector(results);
             } catch (err) {
-              observer.onError(err);
-              return;
+              return observer.onError(err);
             }
 
             observer.onNext(results);
@@ -378,7 +340,7 @@
    */
   Observable.fromNodeCallback = function (func, context, selector) {
     return function () {
-      var args = slice.call(arguments, 0);
+      for(var args = [], i = 0, len = arguments.length; i < len; i++) { args.push(arguments[i]); }
 
       return new AnonymousObservable(function (observer) {
         function handler(err) {
@@ -387,14 +349,13 @@
             return;
           }
 
-          var results = slice.call(arguments, 1);
+          for(var results = [], i = 1, len = arguments.length; i < len; i++) { results.push(arguments[i]); }
 
           if (selector) {
             try {
               results = selector(results);
             } catch (e) {
-              observer.onError(e);
-              return;
+              return observer.onError(e);
             }
             observer.onNext(results);
           } else {
@@ -512,19 +473,6 @@
    */
   Rx.config.useNativeEvents = false;
 
-  // Check for Angular/jQuery/Zepto support
-  var jq =
-   !!root.angular && !!angular.element ? angular.element :
-   (!!root.jQuery ? root.jQuery : (
-     !!root.Zepto ? root.Zepto : null));
-
-  // Check for ember
-  var ember = !!root.Ember && typeof root.Ember.addListener === 'function';
-
-  // Check for Backbone.Marionette. Note if using AMD add Marionette as a dependency of rxjs
-  // for proper loading order!
-  var marionette = !!root.Backbone && !!root.Backbone.Marionette;
-
   /**
    * Creates an observable sequence by adding an event listener to the matching DOMElement or each item in the NodeList.
    *
@@ -547,23 +495,11 @@
 
     // Use only if non-native events are allowed
     if (!Rx.config.useNativeEvents) {
-      if (marionette) {
+      // Handles jq, Angular.js, Zepto, Marionette, Ember.js
+      if (typeof element.on === 'function' && typeof element.off === 'function') {
         return fromEventPattern(
           function (h) { element.on(eventName, h); },
           function (h) { element.off(eventName, h); },
-          selector);
-      }
-      if (ember) {
-        return fromEventPattern(
-          function (h) { Ember.addListener(element, eventName, h); },
-          function (h) { Ember.removeListener(element, eventName, h); },
-          selector);
-      }
-      if (jq) {
-        var $elem = jq(element);
-        return fromEventPattern(
-          function (h) { $elem.on(eventName, h); },
-          function (h) { $elem.off(eventName, h); },
           selector);
       }
     }

@@ -45,6 +45,7 @@
     observerCreate = Rx.Observer.create,
     addRef = Rx.internals.addRef,
     defaultComparer = Rx.internals.isEqual,
+    inherits = Rx.internals.inherits,
     noop = Rx.helpers.noop,
     identity = Rx.helpers.identity,
     isPromise = Rx.helpers.isPromise,
@@ -118,7 +119,7 @@
           // Hack check for valueOf
           var valueOf = obj.valueOf();
           if (typeof valueOf === 'number') { return numberHashFn(valueOf); }
-          if (typeof obj === 'string') { return stringHashFn(valueOf); }
+          if (typeof valueOf === 'string') { return stringHashFn(valueOf); }
         }
         if (obj.hashCode) { return obj.hashCode(); }
 
@@ -534,7 +535,7 @@
    */
   observableProto.window = function (windowOpeningsOrClosingSelector, windowClosingSelector) {
     if (arguments.length === 1 && typeof arguments[0] !== 'function') {
-      return observableWindowWithBounaries.call(this, windowOpeningsOrClosingSelector);
+      return observableWindowWithBoundaries.call(this, windowOpeningsOrClosingSelector);
     }
     return typeof windowOpeningsOrClosingSelector === 'function' ?
       observableWindowWithClosingSelector.call(this, windowOpeningsOrClosingSelector) :
@@ -547,7 +548,7 @@
     });
   }
 
-  function observableWindowWithBounaries(windowBoundaries) {
+  function observableWindowWithBoundaries(windowBoundaries) {
     var source = this;
     return new AnonymousObservable(function (observer) {
       var win = new Subject(),
@@ -669,10 +670,9 @@
    *    and the second triggers when the predicate returns false.
   */
   observableProto.partition = function(predicate, thisArg) {
-    var published = this.publish().refCount();
     return [
-      published.filter(predicate, thisArg),
-      published.filter(function (x, i, o) { return !predicate.call(thisArg, x, i, o); })
+      this.filter(predicate, thisArg),
+      this.filter(function (x, i, o) { return !predicate.call(thisArg, x, i, o); })
     ];
   };
 

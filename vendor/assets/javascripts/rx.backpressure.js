@@ -51,6 +51,29 @@
   var objectDisposed = 'Object has been disposed';
   function checkDisposed() { if (this.isDisposed) { throw new Error(objectDisposed); } }
 
+  /**
+  * Used to pause and resume streams.
+  */
+  Rx.Pauser = (function (__super__) {
+    inherits(Pauser, __super__);
+
+    function Pauser() {
+      __super__.call(this);
+    }
+
+    /**
+     * Pauses the underlying sequence.
+     */
+    Pauser.prototype.pause = function () { this.onNext(false); };
+
+    /**
+    * Resumes the underlying sequence.
+    */
+    Pauser.prototype.resume = function () { this.onNext(true); };
+
+    return Pauser;
+  }(Subject));
+
   var PausableObservable = (function (__super__) {
 
     inherits(PausableObservable, __super__);
@@ -110,7 +133,7 @@
   };
 
   function combineLatestSource(source, subject, resultSelector) {
-    return new AnonymousObservable(function (observer) {
+    return new AnonymousObservable(function (o) {
       var hasValue = [false, false],
         hasValueAll = false,
         isDone = false,
@@ -123,20 +146,20 @@
         hasValue[i] = true;
         if (hasValueAll || (hasValueAll = hasValue.every(identity))) {
           if (err) {
-            observer.onError(err);
+            o.onError(err);
             return;
           }
 
           try {
             res = resultSelector.apply(null, values);
           } catch (ex) {
-            observer.onError(ex);
+            o.onError(ex);
             return;
           }
-          observer.onNext(res);
+          o.onNext(res);
         }
         if (isDone && values[1]) {
-          observer.onCompleted();
+          o.onCompleted();
         }
       }
 
@@ -147,20 +170,20 @@
           },
           function (e) {
             if (values[1]) {
-              observer.onError(e);
+              o.onError(e);
             } else {
               err = e;
             }
           },
           function () {
             isDone = true;
-            values[1] && observer.onCompleted();
+            values[1] && o.onCompleted();
           }),
         subject.subscribe(
           function (x) {
             next(x, 1);
           },
-          observer.onError.bind(observer),
+          function (e) { o.onError(e); },
           function () {
             isDone = true;
             next(true, 1);
@@ -173,7 +196,7 @@
 
     inherits(PausableBufferedObservable, __super__);
 
-    function subscribe(observer) {
+    function subscribe(o) {
       var q = [], previousShouldFire;
 
       var subscription =
@@ -190,14 +213,14 @@
                 // change in shouldFire
                 if (results.shouldFire) {
                   while (q.length > 0) {
-                    observer.onNext(q.shift());
+                    o.onNext(q.shift());
                   }
                 }
               } else {
                 previousShouldFire = results.shouldFire;
                 // new data
                 if (results.shouldFire) {
-                  observer.onNext(results.data);
+                  o.onNext(results.data);
                 } else {
                   q.push(results.data);
                 }
@@ -206,16 +229,16 @@
             function (err) {
               // Empty buffer before sending error
               while (q.length > 0) {
-                observer.onNext(q.shift());
+                o.onNext(q.shift());
               }
-              observer.onError(err);
+              o.onError(err);
             },
             function () {
               // Empty buffer before sending completion
               while (q.length > 0) {
-                observer.onNext(q.shift());
+                o.onNext(q.shift());
               }
-              observer.onCompleted();
+              o.onCompleted();
             }
           );
       return subscription;

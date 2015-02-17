@@ -52,6 +52,7 @@
     AsyncSubject = Rx.AsyncSubject,
     Observer = Rx.Observer,
     inherits = Rx.internals.inherits,
+    bindCallback = Rx.internals.bindCallback,
     addProperties = Rx.internals.addProperties,
     helpers = Rx.helpers,
     noop = helpers.noop,
@@ -269,7 +270,12 @@
    * @returns {Observable} An observable sequence with an array collecting the last elements of all the input sequences.
    */
   Observable.forkJoin = function () {
-    var allSources = argsOrArray(arguments, 0);
+    var allSources = [];
+    if (Array.isArray(arguments[0])) {
+      allSources = arguments[0];
+    } else {
+      for(var i = 0, len = arguments.length; i < len; i++) { allSources.push(arguments[i]); }
+    }
     return new AnonymousObservable(function (subscriber) {
       var count = allSources.length;
       if (count === 0) {
@@ -330,7 +336,6 @@
    */
   observableProto.forkJoin = function (second, resultSelector) {
     var first = this;
-
     return new AnonymousObservable(function (observer) {
       var leftStopped = false, rightStopped = false,
         hasLeft = false, hasRight = false,
@@ -526,7 +531,8 @@
    * @returns {Observable} An exclusive observable with only the results that happen when subscribed.
    */
   observableProto.exclusiveMap = function (selector, thisArg) {
-    var sources = this;
+    var sources = this,
+        selectorFunc = bindCallback(selector, thisArg, 3);
     return new AnonymousObservable(function (observer) {
       var index = 0,
         hasCurrent = false,
@@ -551,7 +557,7 @@
               function (x) {
                 var result;
                 try {
-                  result = selector.call(thisArg, x, index++, innerSource);
+                  result = selectorFunc(x, index++, innerSource);
                 } catch (e) {
                   observer.onError(e);
                   return;
@@ -559,7 +565,7 @@
 
                 observer.onNext(result);
               },
-              observer.onError.bind(observer),
+              function (e) { observer.onError(e); },
               function () {
                 g.remove(innerSubscription);
                 hasCurrent = false;
@@ -570,7 +576,7 @@
               }));
           }
         },
-        observer.onError.bind(observer),
+        function (e) { observer.onError(e); },
         function () {
           isStopped = true;
           if (g.length === 1 && !hasCurrent) {
