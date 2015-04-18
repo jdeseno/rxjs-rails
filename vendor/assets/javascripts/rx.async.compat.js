@@ -37,14 +37,14 @@
   var Observable = Rx.Observable,
     observableProto = Observable.prototype,
     observableFromPromise = Observable.fromPromise,
-    observableThrow = Observable.throwException,
+    observableThrow = Observable.throwError,
     AnonymousObservable = Rx.AnonymousObservable,
     AsyncSubject = Rx.AsyncSubject,
     disposableCreate = Rx.Disposable.create,
     CompositeDisposable = Rx.CompositeDisposable,
     immediateScheduler = Rx.Scheduler.immediate,
-    timeoutScheduler = Rx.Scheduler.timeout,
-    isScheduler = Rx.helpers.isScheduler,
+    timeoutScheduler = Rx.Scheduler['default'],
+    isScheduler = Rx.Scheduler.isScheduler,
     slice = Array.prototype.slice;
 
   var fnString = 'function',
@@ -300,17 +300,19 @@
    */
   Observable.fromCallback = function (func, context, selector) {
     return function () {
-      for(var args = [], i = 0, len = arguments.length; i < len; i++) { args.push(arguments[i]); }
+      var len = arguments.length, args = new Array(len)
+      for(var i = 0; i < len; i++) { args[i] = arguments[i]; }
 
       return new AnonymousObservable(function (observer) {
         function handler() {
-          var results = arguments;
+          var len = arguments.length, results = new Array(len);
+          for(var i = 0; i < len; i++) { results[i] = arguments[i]; }
 
           if (selector) {
             try {
-              results = selector(results);
-            } catch (err) {
-              return observer.onError(err);
+              results = selector.apply(context, results);
+            } catch (e) {
+              return observer.onError(e);
             }
 
             observer.onNext(results);
@@ -340,7 +342,8 @@
    */
   Observable.fromNodeCallback = function (func, context, selector) {
     return function () {
-      for(var args = [], i = 0, len = arguments.length; i < len; i++) { args.push(arguments[i]); }
+      var len = arguments.length, args = new Array(len);
+      for(var i = 0; i < len; i++) { args[i] = arguments[i]; }
 
       return new AnonymousObservable(function (observer) {
         function handler(err) {
@@ -349,11 +352,12 @@
             return;
           }
 
-          for(var results = [], i = 1, len = arguments.length; i < len; i++) { results.push(arguments[i]); }
+          var len = arguments.length, results = [];
+          for(var i = 1; i < len; i++) { results[i - 1] = arguments[i]; }
 
           if (selector) {
             try {
-              results = selector(results);
+              results = selector.apply(context, results);
             } catch (e) {
               return observer.onError(e);
             }
@@ -514,8 +518,7 @@
             try {
               results = selector(arguments);
             } catch (err) {
-              observer.onError(err);
-              return
+              return observer.onError(err);
             }
           }
 
@@ -539,8 +542,7 @@
           try {
             result = selector(arguments);
           } catch (err) {
-            observer.onError(err);
-            return;
+            return observer.onError(err);
           }
         }
         observer.onNext(result);
