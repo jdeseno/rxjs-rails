@@ -1,4 +1,10 @@
-# rxjs-rails
+# THIS REPO IS DEPRECATED
+
+This gem is no longer needed in rails 5.1+ which adds webpack support.
+Add rxjs to your rails project with `yarn add rxjs`.
+
+
+## rxjs-rails
 
 Adds the excellent Reactive Extensions library to rails.
 
